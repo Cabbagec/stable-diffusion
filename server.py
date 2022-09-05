@@ -45,12 +45,12 @@ def get_client_session():
     return aiohttp.ClientSession(trust_env=True, connector=conn)
 
 
-def exec_callback(callback):
+def exec_callback(callback, *args, **kwargs):
     if callback:
         if asyncio.iscoroutinefunction(callback):
-            asyncio.create_task(callback())
+            asyncio.create_task(callback(*args, **kwargs))
         elif callable(callback):
-            callback()
+            callback(*args, **kwargs)
 
 
 class BotServer(web.Application):
@@ -75,9 +75,29 @@ class BotServer(web.Application):
         self.telegram_session = None
 
     def add_job(self, job: 'Job', update_callback=None, finish_callback=None):
+        workers = self.get_workers_by_status(WorkerStatus.WAITING)
+        if not workers:
+            available_workers = len(self.get_workers_by_status(WorkerStatus.RUNNING))
+            if available_workers:
+                exec_callback(
+                    update_callback,
+                    msg=f'Waiting... {available_workers} worker(s) available currently.',
+                )
+
+            else:
+                logging.info(f'No workers available for job {job.job_id}, abandon')
+                exec_callback(
+                    update_callback,
+                    msg=f'Sorry 😢, no workers are available currently. '
+                    f'Please try again when workers are available.',
+                )
+                job.job_status = JobStatus.FAILED
+                return
+
         job.update_callback = update_callback
         job.finish_callback = finish_callback
         self.jobs_queue.append(job)
+        exec_callback(update_callback, msg='🤩 Job added, waiting for generating...')
         logging.info(f'New job added: {job.job_id}, detail: {job.job_details}')
 
     def add_worker(self, worker_id, status=None, timeout=10):
@@ -86,7 +106,21 @@ class BotServer(web.Application):
         return worker
 
     def get_worker(self, worker_id):
-        return self.workers.get(worker_id)
+        worker = self.workers.get(worker_id)
+        if not worker:
+            logging.error(f'Cannot find worker by id: {worker_id}')
+        return worker
+
+    def get_workers_by_status(self, status):
+        if status not in (
+            WorkerStatus.WAITING,
+            WorkerStatus.RUNNING,
+            WorkerStatus.OFFLINE,
+        ):
+            raise Exception(
+                f'Unknown status {status}, wont find any worker by this status'
+            )
+        return [worker for _, worker in self.workers.items() if worker.status == status]
 
     def get_job_by_id(self, job_id, raise_exception=False):
         try:
@@ -106,14 +140,31 @@ class BotServer(web.Application):
         if in_bytes:
             mode = 'w+b'
         with open(path, mode) as f:
-            while True:
-                chunk = await field.read(decode=not in_bytes)
-                if not chunk:
-                    break
-                f.write(chunk)
+            if in_bytes:
+                while True:
+                    chunk = await field.read_chunk()
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            else:
+                while True:
+                    chunk = (await field.read_chunk()).decode()
+                    if not chunk:
+                        break
+                    f.write(chunk)
 
-    async def update_job_callback(self):
-        pass
+    async def callback_loop(self):
+        while True:
+            await asyncio.sleep(3)
+            while self.jobs_updated_map:
+                job_id, job = self.jobs_updated_map.popitem()
+                logging.info(f'Job {job_id}: calling update callback')
+                exec_callback(job.update_callback)
+
+            while self.jobs_finished_map:
+                job_id, job = self.jobs_finished_map.popitem()
+                logging.info(f'Job {job_id}: calling finish callback')
+                exec_callback(job.finish_callback)
 
     # telegram related
     async def start_bot_session(self):
@@ -122,6 +173,7 @@ class BotServer(web.Application):
         res = await self.telegram_session.get(get_tg_endpoint('getMe'))
         logging.debug(f'session started...')
         await self.telegram_setMyCommands()
+        asyncio.create_task(self.callback_loop())
 
     async def telegram_setMyCommands(self):
         for chat_id in allowed_chat_ids:
@@ -274,8 +326,6 @@ class Job:
         logging.debug(
             f'Job {self.job_id}: progress updated with index {index}, path: {filepath}'
         )
-        # callbacks
-        exec_callback(self.update_callback)
 
     @property
     def job_source(self):
@@ -320,6 +370,9 @@ class Job:
 
     @job_status.setter
     def job_status(self, value):
+        if self._job_status != value:
+            logging.info(f'Updating job status from {self._job_status} to {value}')
+
         if value in (JobStatus.WAITING, JobStatus.RUNNING, JobStatus.FAILED):
             self._job_status = value
 
@@ -328,7 +381,6 @@ class Job:
             dump_json_to_file(self.job_details, self.job_tmpdir / 'desc.json')
             dump_json_to_file(self.job_progress, self.job_tmpdir / 'progress.json')
             dump_json_to_file(self.job_result, self.job_tmpdir / 'result.json')
-            exec_callback(self.finish_callback)
 
         else:
             raise Exception(f'Job {self.job_id}: trying to set unknown status: {value}')
@@ -465,7 +517,7 @@ async def get_job(req: web.Request):
     return res
 
 
-@routes.get(get_path('/worker/{worker_id}/report'))
+@routes.post(get_path('/worker/{worker_id}/report'))
 async def report(request: web.Request):
     """
     /worer/{worker_id}/report
@@ -484,37 +536,43 @@ async def report(request: web.Request):
     worker = app.get_worker(request.match_info['worker_id'])
 
     # get all fields
-    file_field = extension = job_id = index = result_img_field = result_gif_field = None
+    progress_tmp = (
+        progress_filename
+    ) = job_id = index = result_img_tmp = result_gif_tmp = None
     completed = False
+
     async for field in (await request.multipart()):
         if field.name == 'job_id':
-            job_id = await field.read(decode=True)
+            job_id = (await field.read()).decode()
 
         elif field.name == 'index':
-            index = int(await field.read(decode=True))
+            index = int(await field.read())
 
         elif field.name == 'file':
-            file_field = field
-            extension = field.filename.split('.')[-1]
+            progress_tmp = app.tmp_dir / str(uuid.uuid4())
+            progress_filename = field.filename
+            await app.write_field(field, progress_tmp)
 
         elif field.name == 'completed':
-            completed = (await field.read(decode=True)).lower() == 'true'
+            completed = (await field.read()).decode().lower() == 'true'
 
         elif field.name == 'result_img':
-            result_img_field = field
+            result_img_tmp = app.tmp_dir / str(uuid.uuid4())
+            await app.write_field(field, result_img_tmp)
 
         elif field.name == 'result_gif':
-            result_gif_field = field
+            result_gif_tmp = app.tmp_dir / str(uuid.uuid4())
+            await app.write_field(field, result_gif_tmp)
 
     # see if fields are complete, progress or result
     if not index or (
-        None in (index, file_field, extension)
-        and None in (result_img_field, result_gif_field)
+        None in (index, progress_tmp, progress_filename)
+        and None in (result_img_tmp, result_gif_tmp)
     ):
         logging.error(
             f'Worker {worker.worker_id}: report is not complete, '
-            f'job_id: {job_id}, index: {index}, file_field: {file_field}, '
-            f'result_img: {result_img_field}, result_gif: {result_gif_field}, '
+            f'job_id: {job_id}, index: {index}, progress_tmp: {progress_tmp}, '
+            f'result_img_tmp: {result_img_tmp}, result_gif_tmp: {result_gif_tmp}, '
             f'skipping'
         )
         return web.Response(status=500, reason='progress content incomplete')
@@ -525,7 +583,6 @@ async def report(request: web.Request):
         job.job_tmpdir = app.tmp_dir / str(job_id)
         if not job.job_tmpdir.exists():
             job.job_tmpdir.mkdir(parents=True)
-    progress_filepath = job.job_tmpdir / (str(index) + f'.{extension}')
 
     # write progress, update status if possible
     if index is not None and not completed:
@@ -533,19 +590,28 @@ async def report(request: web.Request):
             job.job_status = JobStatus.RUNNING
         if worker.status != WorkerStatus.RUNNING:
             worker.status = WorkerStatus.RUNNING
-        await app.write_field(file_field, progress_filepath)
+
+        name_ext = progress_filename.split('.')
+        ext = name_ext[-1] if len(name_ext) == 2 else 'png'
+        progress_filepath = job.job_tmpdir / f'{index:04d}.{ext}'
+        progress_tmp.rename(progress_filepath)
+
         job.update_job_progress(index, progress_filepath.name)
+        app.jobs_updated_map[job.job_id] = job
+        return web.Response()
 
     elif completed:
-        if result_img_field:
-            result_img_path = job.job_tmpdir / result_img_field.filename
-            await app.write_field(result_img_field, result_img_path)
-            job.job_result['result_img'] = result_img_field.filename
+        if result_img_tmp:
+            ext = 'png'
+            result_img_path = job.job_tmpdir / f'result.{ext}'
+            result_img_tmp.rename(result_img_path)
+            job.job_result['result_img'] = result_img_path.name
 
-        if result_gif_field:
-            result_gif_path = job.job_tmpdir / result_gif_field.filename
-            await app.write_field(result_gif_field, result_gif_path)
-            job.job_result['result_gif'] = result_gif_field.filename
+        if result_gif_tmp:
+            ext = 'mp4'
+            result_gif_path = job.job_tmpdir / f'result.{ext}'
+            result_gif_tmp.rename(result_gif_path)
+            job.job_result['result_gif'] = result_gif_path.name
 
         # write results
         job.job_status = JobStatus.FINISHED
@@ -578,7 +644,7 @@ def get_param(data: dict, params, default=None):
 
 
 def filter_prompt(text: str):
-    if re.match(r'^[0-9a-zA-Z,\.!]+$', text):
+    if re.match(r'^[0-9a-zA-Z,\.\s!]+$', text):
         return text
     else:
         raise Exception('English only please')
@@ -594,7 +660,7 @@ async def telegram(req: web.Request):
         app: BotServer = req.app
         msg = get_param(data, ['message'])
         try:
-            await tg_prompt_handler(app, msg)
+            await tg_prompt_handler(app, msg, chat_id)
         except Exception as e:
             res = web.Response()
             await res.prepare(req)
@@ -611,27 +677,62 @@ async def telegram(req: web.Request):
 
 
 def tg_build_update_callback(
-    app: BotServer,
-    client_session: aiohttp.ClientSession,
-    chat_id: int,
-    reply_to_message_id: int,
+    app: BotServer, chat_id: int, reply_to_message_id: int, job_id
 ):
     # TODO: update/finish callback builder
+    async def callback(msg=None):
+        await app.telegram_sendMessage(
+            {
+                'chat_id': chat_id,
+                'text': 'update' if not msg else msg,
+                'reply_to_message_id': reply_to_message_id,
+                'allow_sending_without_reply': True,
+            }
+        )
+        logging.info(f'Job {job_id} update callback called')
+
+    return callback
+
+
+def tg_build_finish_callback(
+    app: BotServer, chat_id: int, reply_to_message_id: int, job_id
+):
     async def callback():
-        await client_session.post(get_tg_endpoint('sendMessage'))
+        logging.info(f'Job {job_id} calling finish callback')
+        await app.telegram_sendMessage(
+            {
+                'chat_id': chat_id,
+                'text': 'finish',
+                'reply_to_message_id': reply_to_message_id,
+                'allow_sending_without_reply': True,
+            }
+        )
+
+    return callback
 
 
-async def tg_prompt_handler(app: BotServer, msg: dict):
+async def tg_prompt_handler(app: BotServer, msg: dict, chat_id):
     text = get_param(msg, 'text')
+    logging.debug(f'Reading from message... {text}')
     words = re.split(r'\s+', text)
+
     if words[0].startswith('/prompt'):
+        msg_id = msg.get('message_id')
         words = [word.replace('。', '.').replace('，', ',') for word in words[1:]]
         prompt = filter_prompt(' '.join(words))
+        logging.info(f'Get prompt: {prompt}')
         job = Job(
             job_details={'prompt': prompt, 'width': 512, 'height': 512, 'steps': 50}
         )
+        logging.info(f'Try adding new job {job.job_id}')
         app.add_job(
-            job, update_callback=tg_build_update_callback(), finish_callback=None
+            job,
+            update_callback=tg_build_update_callback(
+                app, chat_id=chat_id, reply_to_message_id=msg_id, job_id=job.job_id
+            ),
+            finish_callback=tg_build_finish_callback(
+                app, chat_id=chat_id, reply_to_message_id=msg_id, job_id=job.job_id
+            ),
         )
 
 
