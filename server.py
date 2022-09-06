@@ -9,7 +9,7 @@ from pathlib import Path, PurePath
 from typing import Dict, Deque
 
 import aiohttp
-from aiohttp import web, BodyPartReader
+from aiohttp import web, BodyPartReader, FormData
 
 name = 'HomeDiffusionBot'
 tg_bot_token = "token"
@@ -24,7 +24,7 @@ allowed_commands = [
 ]
 
 logging.basicConfig(
-    level=logging.DEBUG, format='[%(asctime)s]:%(levelname)s: %(message)s'
+    level=logging.INFO, format='[%(asctime)s]:%(levelname)s: %(message)s'
 )
 
 telegram_bot_api_server = f'https://api.telegram.org/bot{tg_bot_token}/'
@@ -312,6 +312,9 @@ class Job:
         if job_details:
             self.job_details = job_details
 
+        # others
+        self.update_message_id = ''
+
     def update_job_progress(self, index: int, filename: str):
         filepath = self.job_tmpdir / str(filename)
         if not filepath.exists() or not filepath.is_file():
@@ -322,7 +325,7 @@ class Job:
                 f'Job {self.job_id}: progress file does not exist with index {index}: {filepath}, wont update progress'
             )
 
-        self.job_progress[index] = filepath
+        self.job_progress[index] = filename
         logging.debug(
             f'Job {self.job_id}: progress updated with index {index}, path: {filepath}'
         )
@@ -565,9 +568,9 @@ async def report(request: web.Request):
             await app.write_field(field, result_gif_tmp)
 
     # see if fields are complete, progress or result
-    if not index or (
-        None in (index, progress_tmp, progress_filename)
-        and None in (result_img_tmp, result_gif_tmp)
+    if None in (index, progress_tmp, progress_filename) and None in (
+        result_img_tmp,
+        result_gif_tmp,
     ):
         logging.error(
             f'Worker {worker.worker_id}: report is not complete, '
@@ -615,6 +618,7 @@ async def report(request: web.Request):
 
         # write results
         job.job_status = JobStatus.FINISHED
+        app.jobs_finished_map[job.job_id] = job
         return web.Response()
 
     else:
@@ -653,7 +657,6 @@ def filter_prompt(text: str):
 @routes.post(get_path(f'/{tg_bot_token}'))
 async def telegram(req: web.Request):
     data = await req.json()
-    print(json.dumps(data, ensure_ascii=False, indent=4))
     chat_id = get_param(data, ['message', 'chat', 'id'])
     msg_id = get_param(data, ['message', 'message_id'])
     if chat_id in allowed_chat_ids:
@@ -677,36 +680,128 @@ async def telegram(req: web.Request):
 
 
 def tg_build_update_callback(
-    app: BotServer, chat_id: int, reply_to_message_id: int, job_id
+    app: BotServer, chat_id: int, reply_to_message_id: int, job: Job
 ):
-    # TODO: update/finish callback builder
     async def callback(msg=None):
-        await app.telegram_sendMessage(
-            {
-                'chat_id': chat_id,
-                'text': 'update' if not msg else msg,
-                'reply_to_message_id': reply_to_message_id,
-                'allow_sending_without_reply': True,
-            }
+        # only send a message
+        if msg:
+            logging.info(f'Job {job.job_id} sending an update message: {msg}')
+            await app.telegram_sendMessage(
+                {
+                    'chat_id': chat_id,
+                    'text': 'update' if not msg else msg,
+                    'reply_to_message_id': reply_to_message_id,
+                    'allow_sending_without_reply': True,
+                }
+            )
+            return
+
+        # check if there's any actual progress
+        if not job.job_progress:
+            logging.error(
+                f'Job {job.job_id} update callback called, but no progress found.'
+            )
+            return
+
+        # find out the newest update
+        max_index, max_progress_filename = max(
+            job.job_progress.items(), key=lambda kv: kv[0]
         )
-        logging.info(f'Job {job_id} update callback called')
+        max_progress_filepath = job.job_tmpdir / max_progress_filename
+        total_steps = job.job_details.get('steps')
+        logging.info(f'Job {job.job_id} updating {max_index}/{total_steps}...')
+
+        # create the progress message
+        if not job.update_message_id:
+            with open(max_progress_filepath, 'rb') as progress_f:
+                result_res = await app.telegram_session.post(
+                    get_tg_endpoint('sendPhoto'),
+                    data=FormData(
+                        {
+                            'chat_id': str(chat_id),
+                            'caption': f'{max_index}/{total_steps}',
+                            'photo': progress_f,
+                            'reply_to_message_id': str(reply_to_message_id),
+                            'allow_sending_without_reply': 'true',
+                        }
+                    ),
+                )
+                job.update_message_id = get_param(
+                    await result_res.json(), ['result', 'message_id']
+                )
+                return
+
+        # update the existing progress message
+        with open(max_progress_filepath, 'rb') as progress_f:
+            await app.telegram_session.post(
+                get_tg_endpoint('editMessageMedia'),
+                data=FormData(
+                    {
+                        'chat_id': str(chat_id),
+                        'message_id': str(job.update_message_id),
+                        'media': json.dumps(
+                            {
+                                'type': 'photo',
+                                'media': f'attach://{Path(max_progress_filepath).name}',
+                                'caption': f'{max_index}/{total_steps}',
+                            }
+                        ),
+                        Path(max_progress_filepath).name: progress_f,
+                    }
+                ),
+            )
+        logging.info(f'Job {job.job_id} update callback done')
 
     return callback
 
 
 def tg_build_finish_callback(
-    app: BotServer, chat_id: int, reply_to_message_id: int, job_id
+    app: BotServer, chat_id: int, reply_to_message_id: int, job: Job
 ):
     async def callback():
-        logging.info(f'Job {job_id} calling finish callback')
-        await app.telegram_sendMessage(
-            {
-                'chat_id': chat_id,
-                'text': 'finish',
-                'reply_to_message_id': reply_to_message_id,
-                'allow_sending_without_reply': True,
-            }
-        )
+        logging.info(f'Job {job.job_id} calling finish callback')
+
+        # find out finished result img and gif
+        result_img = job.job_tmpdir / job.job_result.get('result_img')
+        result_gif = job.job_tmpdir / job.job_result.get('result_gif')
+        job_prompt = job.job_details.get('prompt', '')
+        if not (result_img.exists() and result_gif.exists()):
+            logging.error(
+                f'Job {job.job_id} finished, but missing file: {result_img} or {result_gif}'
+            )
+            raise Exception(f'Error: Result file missing')
+
+        with open(result_img, 'rb') as rimg_f, open(result_gif, 'rb') as rgif_f:
+            # send result img
+            await app.telegram_session.post(
+                get_tg_endpoint('sendPhoto'),
+                data=FormData(
+                    {
+                        'chat_id': str(chat_id),
+                        'caption': job_prompt,
+                        'photo': rimg_f,
+                        'reply_to_message_id': str(reply_to_message_id),
+                        'allow_sending_without_reply': 'true',
+                    }
+                ),
+            )
+            # send result gif
+            await app.telegram_session.post(
+                get_tg_endpoint('sendAnimation'),
+                data=FormData(
+                    {
+                        'chat_id': str(chat_id),
+                        'caption': job_prompt,
+                        'animation': rgif_f,
+                        'reply_to_message_id': str(reply_to_message_id),
+                        'allow_sending_without_reply': 'true',
+                    }
+                ),
+            )
+        # clean up
+        app.jobs_queue.remove(job)
+        logging.debug(f'Job {job.job_id} finished, removed from job queue')
+        logging.debug(f'Job {job.job_id} finish callback done')
 
     return callback
 
@@ -728,10 +823,10 @@ async def tg_prompt_handler(app: BotServer, msg: dict, chat_id):
         app.add_job(
             job,
             update_callback=tg_build_update_callback(
-                app, chat_id=chat_id, reply_to_message_id=msg_id, job_id=job.job_id
+                app, chat_id=chat_id, reply_to_message_id=msg_id, job=job
             ),
             finish_callback=tg_build_finish_callback(
-                app, chat_id=chat_id, reply_to_message_id=msg_id, job_id=job.job_id
+                app, chat_id=chat_id, reply_to_message_id=msg_id, job=job
             ),
         )
 
