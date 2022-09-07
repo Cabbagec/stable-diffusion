@@ -2,14 +2,13 @@ import asyncio
 import json
 import logging
 import re
-import ssl
 import uuid
 from collections import deque
 from pathlib import Path, PurePath
 from typing import Dict, Deque
 
-import aiohttp
-from aiohttp import web, BodyPartReader, FormData
+import httpx
+from aiohttp import web, BodyPartReader
 
 name = 'HomeDiffusionBot'
 tg_bot_token = "token"
@@ -39,10 +38,14 @@ def dump_json_to_file(dict_json: dict, file):
         json.dump(dict_json, ensure_ascii=False, indent=4, fp=f)
 
 
-def get_client_session():
-    ssl_context = ssl.create_default_context(cafile='/etc/ssl/cert.pem')
-    conn = aiohttp.TCPConnector(ssl_context=ssl_context)
-    return aiohttp.ClientSession(trust_env=True, connector=conn)
+#
+# def get_client_session(self_signed_ssl_cert=False):
+#     if self_signed_ssl_cert:
+#         ssl_context = ssl.create_default_context(cafile='/etc/ssl/cert.pem')
+#         conn = aiohttp.TCPConnector(ssl_context=ssl_context)
+#         return aiohttp.ClientSession(trust_env=True, connector=conn)
+#     else:
+#         return aiohttp.ClientSession()
 
 
 def exec_callback(callback, *args, **kwargs):
@@ -72,7 +75,9 @@ class BotServer(web.Application):
 
         # TODO: rate limit from telegram
         self.rate_limits = {'TELEGRAM': 0}
-        self.telegram_session = None
+
+        self.telegram_session = httpx.AsyncClient(http2=True)
+        self.set_ssl_cert = None
 
     def add_job(self, job: 'Job', update_callback=None, finish_callback=None):
         workers = self.get_workers_by_status(WorkerStatus.WAITING)
@@ -169,7 +174,6 @@ class BotServer(web.Application):
     # telegram related
     async def start_bot_session(self):
         logging.debug(f'start session...')
-        self.telegram_session = get_client_session()
         res = await self.telegram_session.get(get_tg_endpoint('getMe'))
         logging.debug(f'session started...')
         await self.telegram_setMyCommands()
@@ -716,18 +720,16 @@ def tg_build_update_callback(
             with open(max_progress_filepath, 'rb') as progress_f:
                 result_res = await app.telegram_session.post(
                     get_tg_endpoint('sendPhoto'),
-                    data=FormData(
-                        {
-                            'chat_id': str(chat_id),
-                            'caption': f'{max_index}/{total_steps}',
-                            'photo': progress_f,
-                            'reply_to_message_id': str(reply_to_message_id),
-                            'allow_sending_without_reply': 'true',
-                        }
-                    ),
+                    data={
+                        'chat_id': str(chat_id),
+                        'caption': f'{max_index}/{total_steps}',
+                        'reply_to_message_id': str(reply_to_message_id),
+                        'allow_sending_without_reply': 'true',
+                    },
+                    files={'photo': progress_f},
                 )
                 job.update_message_id = get_param(
-                    await result_res.json(), ['result', 'message_id']
+                    result_res.json(), ['result', 'message_id']
                 )
                 return
 
@@ -735,21 +737,19 @@ def tg_build_update_callback(
         with open(max_progress_filepath, 'rb') as progress_f:
             await app.telegram_session.post(
                 get_tg_endpoint('editMessageMedia'),
-                data=FormData(
-                    {
-                        'chat_id': str(chat_id),
-                        'message_id': str(job.update_message_id),
-                        'media': json.dumps(
-                            {
-                                'type': 'photo',
-                                'media': f'attach://{Path(max_progress_filepath).name}',
-                                'caption': f'{max_index}/{total_steps}',
-                            }
-                        ),
-                        Path(max_progress_filepath).name: progress_f,
-                    }
-                ),
-            )
+                data={
+                    'chat_id': str(chat_id),
+                    'message_id': str(job.update_message_id),
+                    'media': json.dumps(
+                        {
+                            'type': 'photo',
+                            'media': f'attach://{Path(max_progress_filepath).name}',
+                            'caption': f'{max_index}/{total_steps}',
+                        }
+                    ),
+                },
+                files={Path(max_progress_filepath).name: progress_f},
+            ),
         logging.info(f'Job {job.job_id} update callback done')
 
     return callback
@@ -775,28 +775,24 @@ def tg_build_finish_callback(
             # send result img
             await app.telegram_session.post(
                 get_tg_endpoint('sendPhoto'),
-                data=FormData(
-                    {
-                        'chat_id': str(chat_id),
-                        'caption': job_prompt,
-                        'photo': rimg_f,
-                        'reply_to_message_id': str(reply_to_message_id),
-                        'allow_sending_without_reply': 'true',
-                    }
-                ),
+                data={
+                    'chat_id': str(chat_id),
+                    'caption': job_prompt,
+                    'reply_to_message_id': str(reply_to_message_id),
+                    'allow_sending_without_reply': 'true',
+                },
+                files={'photo': rimg_f},
             )
             # send result gif
             await app.telegram_session.post(
                 get_tg_endpoint('sendAnimation'),
-                data=FormData(
-                    {
-                        'chat_id': str(chat_id),
-                        'caption': job_prompt,
-                        'animation': rgif_f,
-                        'reply_to_message_id': str(reply_to_message_id),
-                        'allow_sending_without_reply': 'true',
-                    }
-                ),
+                data={
+                    'chat_id': str(chat_id),
+                    'caption': job_prompt,
+                    'reply_to_message_id': str(reply_to_message_id),
+                    'allow_sending_without_reply': 'true',
+                },
+                files={'animation': rgif_f},
             )
         # clean up
         app.jobs_queue.remove(job)
