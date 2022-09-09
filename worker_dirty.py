@@ -1,5 +1,6 @@
+import json
 import subprocess
-from pathlib import Path
+import uuid
 
 import httpx
 import asyncio
@@ -39,23 +40,27 @@ async def heartbeat(client, status_dict: dict):
 async def get_job(client, job_dict: dict):
     while True:
         await asyncio.sleep(3)
-        logging.info('Trying to get new job')
-        res = await client.get(get_endpoint('job'))
-        if not res:
-            continue
+        logging.debug('Trying to get new job')
+        try:
+            res = await client.get(get_endpoint('job'))
+            if not res:
+                continue
 
-        res_j = res.json()
-        logging.info(f'job json received: {res_j}')
-        if not res_j:
-            continue
+            res_j = res.json()
+            logging.debug(f'job json received: {res_j}')
+            if not res_j:
+                continue
 
-        job_id = res_j.get('job_id')
-        if job_id not in job_dict:
-            job_dict[job_id] = res_j
-            break
+            job_id = res_j.get('job_id')
+            if job_id not in job_dict:
+                job_dict[job_id] = res_j
+                break
+        except Exception as e:
+            logging.error(f'failed to get job')
+            logging.exception(e)
 
 
-async def send_progress(client, total_steps: int, updator: ProgressDisplayer):
+async def send_progress(client, total_steps: int, updator: ProgressDisplayer, params):
     while True:
         await asyncio.sleep(3)
         try:
@@ -94,7 +99,11 @@ async def send_progress(client, total_steps: int, updator: ProgressDisplayer):
                     ) as gif_f:
                         await client.post(
                             get_endpoint('report'),
-                            data={'completed': 'true', 'job_id': job_id},
+                            data={
+                                'completed': 'true',
+                                'job_id': job_id,
+                                'job_details': json.dumps(params),
+                            },
                             files={
                                 'result_img': ('result.png', img_f),
                                 'result_gif': ('result.mp4', gif_f),
@@ -105,7 +114,11 @@ async def send_progress(client, total_steps: int, updator: ProgressDisplayer):
                     with open(filepath, 'rb') as img_f:
                         await client.post(
                             get_endpoint('report'),
-                            data={'completed': 'true', 'job_id': job_id},
+                            data={
+                                'completed': 'true',
+                                'job_id': job_id,
+                                'job_details': json.dumps(params),
+                            },
                             files={
                                 'result_img': ('result.png', img_f),
                                 # 'result_gif': ('result.mp4', gif_f),
@@ -116,7 +129,11 @@ async def send_progress(client, total_steps: int, updator: ProgressDisplayer):
             with open(filepath, 'rb') as pf:
                 await client.post(
                     get_endpoint('report'),
-                    data={'index': max_index, 'job_id': job_id},
+                    data={
+                        'index': max_index,
+                        'job_id': job_id,
+                        'job_details': json.dumps(params),
+                    },
                     files={'file': pf},
                 )
         except Exception as e:
@@ -127,12 +144,31 @@ async def send_progress(client, total_steps: int, updator: ProgressDisplayer):
 async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     job_id, job_desc = job_dict.popitem()
     logging.info(f'Got new job {job_id}, {job_desc}, starting...')
+    status_dict.update({'job_id': job_id})
     prompt = job_desc.get('prompt')
     width = int(job_desc.get('width', 0))
     height = int(job_desc.get('height', 0))
-    steps = int(job_desc.get('steps', 0))
+    steps = min(100, max(0, int(job_desc.get('steps', 0))))
+    guidance_scale = min(8.0, max(1.0, float(job_desc.get('guidance_scale', 4))))
+    seed = min(
+        4294967295,
+        max(0, int(job_desc.get('seed', uuid.uuid4().int & ((1 << 32) - 1)))),
+    )
+    if width % 64 != 0 or height % 64 != 0:
+        raise Exception(f'Width and height must be factors of 64.')
 
-    opt = get_opt(prompt=prompt, width=width, height=height, steps=steps)
+    if (width * height) > (512 * 512 * 1.2):
+        raise Exception(f'Image too large, try use smaller width and height')
+
+    params = {
+        'prompt': prompt,
+        'width': width,
+        'height': height,
+        'steps': steps,
+        'scale': guidance_scale,
+        'seed': seed,
+    }
+    opt = get_opt(**params)
     updator = ProgressDisplayer(
         show_progress=False, save_progress=True, displayer_uuid=job_id
     )
@@ -140,7 +176,9 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
         None, partial(run_task, opt, model, updator)
     )
     status_dict.update({'status': 'RUNNING', 'job_id': job_id})
-    await send_progress(client=client, total_steps=steps, updator=updator)
+    await send_progress(
+        client=client, total_steps=steps, updator=updator, params=params
+    )
 
 
 async def main():

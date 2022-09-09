@@ -285,7 +285,15 @@ class Job:
     }
     """
 
-    job_detail_fields = ('job_id', 'prompt', 'width', 'height', 'steps')
+    job_detail_fields = (
+        'job_id',
+        'prompt',
+        'width',
+        'height',
+        'steps',
+        'guidance_scale',
+        'seed',
+    )
 
     def __init__(
         self,
@@ -533,6 +541,16 @@ async def report(request: web.Request):
     "index": 123
     # finished or not
     "completed": false/true
+    "job_details": {
+        "prompt": "...",
+        "width": 512,
+        "height": 512,
+        "steps": 50,
+        "guidance_scale": 4.0,
+        "seed": xxx
+    }
+
+    "error": "xxx"
 
     file: <file: 123.png>
     result_img: <file: abc.png>
@@ -547,6 +565,7 @@ async def report(request: web.Request):
         progress_filename
     ) = job_id = index = result_img_tmp = result_gif_tmp = None
     completed = False
+    job_details = {}
 
     async for field in (await request.multipart()):
         if field.name == 'job_id':
@@ -571,6 +590,9 @@ async def report(request: web.Request):
             result_gif_tmp = app.tmp_dir / str(uuid.uuid4())
             await app.write_field(field, result_gif_tmp)
 
+        elif field.name == 'job_details':
+            job_details = json.loads((await field.read()).decode())
+
     # see if fields are complete, progress or result
     if None in (index, progress_tmp, progress_filename) and None in (
         result_img_tmp,
@@ -584,6 +606,12 @@ async def report(request: web.Request):
         )
         return web.Response(status=500, reason='progress content incomplete')
     job = app.get_job_by_id(job_id, raise_exception=True)
+    # update job details
+    if not job_details or not isinstance(job_details, dict):
+        logging.error(f'Worker {worker.worker_id} did not report job details')
+        return web.Response(status=500, reason='progress content incomplete')
+
+    job.job_details.update(job_details)
 
     # get progress filepath
     if not job.job_tmpdir:
@@ -711,9 +739,14 @@ def tg_build_update_callback(
         max_index, max_progress_filename = max(
             job.job_progress.items(), key=lambda kv: kv[0]
         )
+        details = job.job_details
         max_progress_filepath = job.job_tmpdir / max_progress_filename
-        total_steps = job.job_details.get('steps')
+        total_steps = details.get('steps')
         logging.info(f'Job {job.job_id} updating {max_index}/{total_steps}...')
+
+        width, height = details.get('width'), details.get('height')
+        steps, seed = details.get('steps'), details.get('seed')
+        guidance_scale = details.get('guidance_scale')
 
         # create the progress message
         if not job.update_message_id:
@@ -744,7 +777,7 @@ def tg_build_update_callback(
                         {
                             'type': 'photo',
                             'media': f'attach://{Path(max_progress_filepath).name}',
-                            'caption': f'{max_index}/{total_steps}',
+                            'caption': f'{max_index}/{total_steps}\n\nSeed: {seed}\nWxH: {width}x{height}\nGuidance scale: {guidance_scale}',
                         }
                     ),
                 },
@@ -760,11 +793,15 @@ def tg_build_finish_callback(
 ):
     async def callback():
         logging.info(f'Job {job.job_id} calling finish callback')
+        details = job.job_details
 
         # find out finished result img and gif
         result_img = job.job_tmpdir / job.job_result.get('result_img')
         result_gif = job.job_tmpdir / job.job_result.get('result_gif')
-        job_prompt = job.job_details.get('prompt', '')
+        job_prompt = details.get('prompt', '')
+        width, height = details.get('width'), details.get('height')
+        steps, seed = details.get('steps'), details.get('seed')
+        guidance_scale = details.get('guidance_scale')
         if not (result_img.exists() and result_gif.exists()):
             logging.error(
                 f'Job {job.job_id} finished, but missing file: {result_img} or {result_gif}'
@@ -777,7 +814,7 @@ def tg_build_finish_callback(
                 get_tg_endpoint('sendPhoto'),
                 data={
                     'chat_id': str(chat_id),
-                    'caption': job_prompt,
+                    'caption': f'{job_prompt}\n\nSeed: {seed}\nWxH: {width}x{height}\nGuidance scale: {guidance_scale}',
                     'reply_to_message_id': str(reply_to_message_id),
                     'allow_sending_without_reply': 'true',
                 },
@@ -788,7 +825,7 @@ def tg_build_finish_callback(
                 get_tg_endpoint('sendAnimation'),
                 data={
                     'chat_id': str(chat_id),
-                    'caption': job_prompt,
+                    'caption': f'{job_prompt}\n\nSeed: {seed}\nWxH: {width}x{height}\nGuidance scale: {guidance_scale}',
                     'reply_to_message_id': str(reply_to_message_id),
                     'allow_sending_without_reply': 'true',
                 },
@@ -810,10 +847,25 @@ async def tg_prompt_handler(app: BotServer, msg: dict, chat_id):
     if words[0].startswith('/prompt'):
         msg_id = msg.get('message_id')
         words = [word.replace('。', '.').replace('，', ',') for word in words[1:]]
-        prompt = filter_prompt(' '.join(words))
+        extra_param = {}
+        prompt_words = []
+        for word in words:
+            if ':' in word:
+                extra_param.update(dict(re.findall(r'([0-9a-zA-Z\-_]+):(\d+)', word)))
+
+            else:
+                prompt_words.append(word)
+
+        prompt = filter_prompt(' '.join(prompt_words))
         logging.info(f'Get prompt: {prompt}')
         job = Job(
-            job_details={'prompt': prompt, 'width': 512, 'height': 512, 'steps': 50}
+            job_details={
+                'prompt': prompt,
+                'width': 512,
+                'height': 512,
+                'steps': 50,
+                **extra_param,
+            }
         )
         logging.info(f'Try adding new job {job.job_id}')
         app.add_job(

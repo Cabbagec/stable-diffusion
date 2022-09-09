@@ -233,7 +233,7 @@ class ProgressDisplayer:
 # In[3]:
 
 
-def get_opt(prompt, steps=50, height=512, width=512):
+def get_opt(prompt, steps=50, height=512, width=512, scale=4.0, seed=None):
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -346,6 +346,8 @@ def get_opt(prompt, steps=50, height=512, width=512):
         'n_samples': 1,
         'skip_grid': True,
         'skip_save': True,
+        'scale': scale,
+        'seed': seed,
     }
     opt.__dict__.update(update)
     return opt
