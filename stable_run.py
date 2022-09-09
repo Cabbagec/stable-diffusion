@@ -218,7 +218,9 @@ class ProgressDisplayer:
         if self.save_progress:
             index = index or self.index
             self.index += 1
-            image.save(self.save_path / f'{index:03d}.png')
+            img_path = self.save_path / f'{index:03d}.png'
+            image.save(img_path)
+            self.index_path[index] = img_path
 
     def get_callback(self, model):
         def callback(array, index):
