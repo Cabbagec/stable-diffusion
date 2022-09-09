@@ -204,6 +204,15 @@ async def main():
         except asyncio.TimeoutError:
             logging.error(f'current job timed out')
 
+        except Exception as e:
+            logging.error(e)
+            asyncio.create_task(
+                client.post(
+                    get_endpoint('error'),
+                    json={'job_id': status_dict.get('job_id'), 'error': str(e)},
+                )
+            )
+
         finally:
             status_dict.update({'status': 'WAITING', 'job_id': None})
 

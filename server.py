@@ -532,6 +532,32 @@ async def get_job(req: web.Request):
     return res
 
 
+@routes.post(get_path('/worker/{worker_id}/error'))
+async def error(req: web.Request):
+    """
+    POST /worker/<worker_id>/heartbeat
+    > request: Status
+    {
+        "job_id": <uuid>,
+        "error": "xxx"
+    }
+
+    > response: {}
+    """
+    req_data = await req.json()
+    app: BotServer = req.app
+
+    worker_id = req.match_info.get('worker_id')
+    job_id = req_data.get('job_id')
+    job = app.get_job_by_id(job_id)
+    if job:
+        err = req_data.get('error', '')
+        job.job_status = JobStatus.FAILED
+        exec_callback(job.update_callback, msg=err)
+        app.jobs_queue.remove(job)
+        return web.Response()
+
+
 @routes.post(get_path('/worker/{worker_id}/report'))
 async def report(request: web.Request):
     """
