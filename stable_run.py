@@ -176,9 +176,17 @@ class NoCatchOutput(Output):
 
 
 class ProgressDisplayer:
-    def __init__(self, show_progress=True, save_progress=False, save_path='/tmp'):
+    def __init__(
+        self,
+        show_progress=True,
+        save_progress=False,
+        save_path='/tmp',
+        displayer_uuid=None,
+    ):
         self.show_progress = show_progress
-        self.displayer_uuid = str(uuid.uuid4())
+        self.displayer_uuid = (
+            str(uuid.uuid4()) if not displayer_uuid else displayer_uuid
+        )
         if self.show_progress:
             self.output = NoCatchOutput()
             display(self.output)
@@ -187,6 +195,7 @@ class ProgressDisplayer:
         self.save_progress = save_progress
         self.save_path = Path(save_path)
         self.index = 0
+        self.index_path = {}
         if save_path:
             if not self.save_path.exists() or not self.save_path.is_dir():
                 print(
@@ -350,7 +359,7 @@ def load_model():
     return model
 
 
-def run(opt, model):
+def run(opt, model, progress_displayer=None):
     opt.x = 'sd'
     if opt.laion400m:
         print("Falling back to LAION 400M model...")
@@ -427,9 +436,10 @@ def run(opt, model):
     with torch.no_grad():
         with precision_scope("cuda"):
             with model.ema_scope():
-                progress_displayer = ProgressDisplayer(
-                    save_progress=True, show_progress=True
-                )
+                if not progress_displayer:
+                    progress_displayer = ProgressDisplayer(
+                        save_progress=True, show_progress=True
+                    )
                 callback_ = progress_displayer.get_callback(model)
 
                 tic = time.time()
