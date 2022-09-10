@@ -68,8 +68,12 @@ async def send_progress(client, total_steps: int, updator: ProgressDisplayer, pa
             if not updator.index_path:
                 continue
 
+            total_steps = updator.total_steps
+            if total_steps:
+                params['steps'] = total_steps
+
             max_index, filepath = max(updator.index_path.items(), key=lambda kv: kv[0])
-            if max_index == total_steps - 1:
+            if max_index >= total_steps - 1:
                 logging.info(f'generating animation for {job_id}...')
                 if (
                     subprocess.run(
