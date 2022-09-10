@@ -195,6 +195,7 @@ class ProgressDisplayer:
         self.save_progress = save_progress
         self.save_path = Path(save_path)
         self.index = 0
+        self.total_steps = None
         self.index_path = {}
         if save_path:
             if not self.save_path.exists() or not self.save_path.is_dir():
@@ -207,7 +208,12 @@ class ProgressDisplayer:
                 self.save_path.mkdir()
                 print(f'saving progress files to {self.save_path}')
 
-    def refresh_img(self, image: Image, index=None):
+    def refresh_img(self, image: Image, index=None, total_steps=None):
+        index = index or self.index
+        self.index += 1
+        img_path = self.save_path / f'{index:03d}.png'
+        self.total_steps = total_steps or self.total_steps
+
         if self.show_progress:
             with self.output:
                 if not self.displayer:
@@ -216,16 +222,13 @@ class ProgressDisplayer:
                     self.displayer.display(image)
 
         if self.save_progress:
-            index = index or self.index
-            self.index += 1
-            img_path = self.save_path / f'{index:03d}.png'
             image.save(img_path)
             self.index_path[index] = img_path
 
     def get_callback(self, model):
-        def callback(array, index):
+        def callback(array, index, total_steps):
             image = decode_single_sample_from_model(array, model)
-            self.refresh_img(image, index)
+            self.refresh_img(image, index, total_steps)
 
         return callback
 
