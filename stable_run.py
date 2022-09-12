@@ -11,6 +11,7 @@ import logging
 import argparse
 import os
 import shlex
+import subprocess
 import time
 import uuid
 from contextlib import nullcontext
@@ -55,6 +56,7 @@ logging.basicConfig(
     level=logging.INFO, format='[%(asctime)s]:%(levelname)s: %(message)s'
 )
 tlogging.set_verbosity_error()
+realesrgan_dir = '/Repositories/realesrgan'
 
 
 @contextmanager
@@ -242,7 +244,9 @@ class ProgressDisplayer:
 # In[3]:
 
 
-def get_opt(prompt, steps=50, height=512, width=512, scale=4.0, seed=None):
+def get_opt(
+    prompt, steps=50, height=512, width=512, scale=4.0, seed=None, *args, **kwargs
+):
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -531,6 +535,62 @@ def run(opt, model, progress_displayer=None):
     print(
         f"Your samples are ready and waiting for you here: \n{outpath} \n" f" \nEnjoy."
     )
+
+
+def generate_animation(dir_path: Path):
+    logging.info(f'generating animation for pics in {dir_path}')
+    if (
+        subprocess.run(
+            [
+                'ffmpeg',
+                '-framerate',
+                '24',
+                '-pattern_type',
+                'glob',
+                '-i',
+                '*.png',
+                '-c:v',
+                'libx264',
+                '-pix_fmt',
+                'yuv420p',
+                'output.mp4',
+            ],
+            cwd=dir_path,
+        ).returncode
+        == 0
+    ):
+        animation_filepath = dir_path / "output.mp4"
+        logging.info(f'generated: {animation_filepath}')
+        return animation_filepath
+
+
+def generate_upscaled(image_path: Path, factor: int):
+    logging.info(f'generating upscaled version for {image_path}')
+    upscaled_filepath = image_path.parent / 'output.jpg'
+    factor = 4 if factor not in (2, 3, 4) else factor
+    if (
+        subprocess.run(
+            [
+                'realesrgan-ncnn-vulkan',
+                '-i',
+                str(image_path),
+                '-o',
+                upscaled_filepath,
+                '-s',
+                str(factor),
+                '-n',
+                'realesrgan-x4plus',
+                '-f',
+                'ext/jpg',
+            ],
+            cwd=Path(realesrgan_dir),
+        ).returncode
+        == 0
+    ):
+        logging.info(
+            f'image upscaled: {image_path}, output: {upscaled_filepath}, factor: {factor}'
+        )
+        return upscaled_filepath
 
 
 # ### Run!
