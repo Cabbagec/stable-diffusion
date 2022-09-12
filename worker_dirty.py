@@ -1,13 +1,12 @@
+import asyncio
 import json
-import subprocess
+import logging
 import uuid
+from functools import partial
 
 import httpx
-import asyncio
-import logging
 
 from stable_run import load_model, get_opt, run as run_task, ProgressDisplayer
-from functools import partial
 
 token = 'helium'
 url = f'https://bot.everdream.xyz/bot/worker/{token}'
@@ -23,17 +22,22 @@ def get_endpoint(v):
 
 async def heartbeat(client, status_dict: dict):
     while True:
-        logging.debug(f'heartbeating after 4...')
+        logging.info(f'heartbeating after 5...')
         try:
-            await client.post(
+            await asyncio.sleep(5)
+            r = await client.post(
                 get_endpoint('heartbeat'),
                 json={
                     'status': status_dict.get('status', 'WAITING'),
                     'job_id': status_dict.get('job_id'),
                 },
             )
-            await asyncio.sleep(5)
-        except Exception:
+            # abort job
+            if r.json().get('abort'):
+                status_dict['abort'] = True
+
+        except Exception as e:
+            logging.exception(e)
             pass
 
 
@@ -60,7 +64,9 @@ async def get_job(client, job_dict: dict):
             logging.exception(e)
 
 
-async def send_progress(client, total_steps: int, updator: ProgressDisplayer, params):
+async def send_progress(
+    client, total_steps: int, updator: ProgressDisplayer, params, status_dict
+):
     while True:
         await asyncio.sleep(3)
         try:
