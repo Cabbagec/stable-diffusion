@@ -86,72 +86,29 @@ async def send_progress(
 
             max_index, filepath = max(updator.index_path.items(), key=lambda kv: kv[0])
             if max_index >= total_steps - 1:
-                logging.info(f'generating animation for {job_id}...')
-                if (
-                    subprocess.run(
-                        [
-                            'ffmpeg',
-                            '-framerate',
-                            '24',
-                            '-pattern_type',
-                            'glob',
-                            '-i',
-                            '*.png',
-                            '-c:v',
-                            'libx264',
-                            '-pix_fmt',
-                            'yuv420p',
-                            'output.mp4',
-                        ],
-                        cwd=filepath.parent,
-                    ).returncode
-                    == 0
-                ):
-                    animation_filepath = filepath.parent / "output.mp4"
-                    logging.info(f'generated: {animation_filepath}')
-
-                    with open(filepath, 'rb') as img_f, open(
-                        animation_filepath, 'rb'
-                    ) as gif_f:
-                        await client.post(
-                            get_endpoint('report'),
-                            data={
-                                'completed': 'true',
-                                'job_id': job_id,
-                                'job_details': json.dumps(params),
-                            },
-                            files={
-                                'result_img': ('result.png', img_f),
-                                'result_gif': ('result.mp4', gif_f),
-                            },
-                        )
-                else:
-                    logging.info(f'generating animation failed... sending img only')
-                    with open(filepath, 'rb') as img_f:
-                        await client.post(
-                            get_endpoint('report'),
-                            data={
-                                'completed': 'true',
-                                'job_id': job_id,
-                                'job_details': json.dumps(params),
-                            },
-                            files={
-                                'result_img': ('result.png', img_f),
-                                # 'result_gif': ('result.mp4', gif_f),
-                            },
-                        )
-                return
-
-            with open(filepath, 'rb') as pf:
-                await client.post(
-                    get_endpoint('report'),
-                    data={
-                        'index': max_index,
-                        'job_id': job_id,
-                        'job_details': json.dumps(params),
-                    },
-                    files={'file': pf},
-                )
+                logging.info(f'generation of last pic done')
+                with open(filepath, 'rb') as img_f:
+                    await client.post(
+                        get_endpoint('report'),
+                        data={
+                            'completed': 'true',
+                            'job_id': job_id,
+                            'job_details': json.dumps(params),
+                        },
+                        files={'result_img': ('result.png', img_f)},
+                    )
+            else:
+                logging.info(f'sending step: {max_index}')
+                with open(filepath, 'rb') as pf:
+                    await client.post(
+                        get_endpoint('report'),
+                        data={
+                            'index': max_index,
+                            'job_id': job_id,
+                            'job_details': json.dumps(params),
+                        },
+                        files={'file': pf},
+                    )
         except Exception as e:
             logging.error(f'send progress failed with {e}')
             logging.exception(e)

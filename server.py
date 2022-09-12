@@ -313,6 +313,9 @@ class Job:
         self.job_assignee = assignee
         self.job_source = job_source
 
+        self.animation_sent = False
+        self.upscaled_sent = False
+
         if tmp_dir:
             tmp_dir = Path(tmp_dir)
             if not tmp_dir.exists():
@@ -418,7 +421,9 @@ async def heartbeat(req: web.Request):
         "job_id": <uuid>,
     }
 
-    > response: {}
+    > response: {
+        'abort': True/false
+    }
     """
     req_data = await req.json()
     app: BotServer = req.app
@@ -455,7 +460,7 @@ async def heartbeat(req: web.Request):
                 f'Worker {worker.worker_id}: claims job {job_id} but job of this id is already lost.'
             )
 
-    return web.Response()
+    return web.json_response({})
 
 
 @routes.get(get_path('/worker/{worker_id}/job'))
@@ -470,12 +475,20 @@ async def get_job(req: web.Request):
         "width": 512,
         "height": 512
     }
+    or {
+        "job_id": <uuid>,
+        "animation": true,      /optional
+        "upscale": 2/3/4,       /optional
+    }
     or {}
     """
     # req_data = await req.json()
     worker_id = req.match_info['worker_id']
     app: BotServer = req.app
     worker = app.get_worker(worker_id)
+    # worker not registered yet, return empty
+    if not worker:
+        return web.json_response({})
 
     logging.info(f'Worker {worker.worker_id}: worker trying to get job')
     if worker.status != WorkerStatus.WAITING:
@@ -523,13 +536,14 @@ async def get_job(req: web.Request):
         return web.json_response({})
 
     # send details of selected job to current worker
-    res = web.json_response(job.job_details)
-    await res.prepare(req)
-    await res.write_eof()
+    # res = web.json_response(job.job_details)
+    # await res.prepare(req)
+    # await res.write_eof()
 
     # confirm after sending successfully
     job.job_assignee = worker
-    return res
+    # send details of selected job to current worker
+    return web.json_response(job.job_details)
 
 
 @routes.post(get_path('/worker/{worker_id}/error'))
@@ -587,9 +601,7 @@ async def report(request: web.Request):
     worker = app.get_worker(request.match_info['worker_id'])
 
     # get all fields
-    progress_tmp = (
-        progress_filename
-    ) = job_id = index = result_img_tmp = result_gif_tmp = None
+    progress_tmp = progress_filename = job_id = index = result_img_tmp = None
     completed = False
     job_details = {}
 
@@ -611,23 +623,20 @@ async def report(request: web.Request):
         elif field.name == 'result_img':
             result_img_tmp = app.tmp_dir / str(uuid.uuid4())
             await app.write_field(field, result_img_tmp)
-
-        elif field.name == 'result_gif':
-            result_gif_tmp = app.tmp_dir / str(uuid.uuid4())
-            await app.write_field(field, result_gif_tmp)
+        #
+        # elif field.name == 'result_gif':
+        #     result_gif_tmp = app.tmp_dir / str(uuid.uuid4())
+        #     await app.write_field(field, result_gif_tmp)
 
         elif field.name == 'job_details':
             job_details = json.loads((await field.read()).decode())
 
     # see if fields are complete, progress or result
-    if None in (index, progress_tmp, progress_filename) and None in (
-        result_img_tmp,
-        result_gif_tmp,
-    ):
+    if None in (index, progress_tmp, progress_filename) and not result_img_tmp:
         logging.error(
             f'Worker {worker.worker_id}: report is not complete, '
             f'job_id: {job_id}, index: {index}, progress_tmp: {progress_tmp}, '
-            f'result_img_tmp: {result_img_tmp}, result_gif_tmp: {result_gif_tmp}, '
+            f'result_img_tmp: {result_img_tmp}, '
             f'skipping'
         )
         return web.Response(status=500, reason='progress content incomplete')
@@ -645,7 +654,7 @@ async def report(request: web.Request):
         if not job.job_tmpdir.exists():
             job.job_tmpdir.mkdir(parents=True)
 
-    # write progress, update status if possible
+    # job in progress, write progress, update status if possible
     if index is not None and not completed:
         if job.job_status != JobStatus.RUNNING:
             job.job_status = JobStatus.RUNNING
@@ -658,24 +667,19 @@ async def report(request: web.Request):
         progress_tmp.rename(progress_filepath)
 
         job.update_job_progress(index, progress_filepath.name)
+        # put into updated jobs, updator coroutine will collect and report the progress
         app.jobs_updated_map[job.job_id] = job
         return web.Response()
 
-    elif completed:
-        if result_img_tmp:
-            ext = 'png'
-            result_img_path = job.job_tmpdir / f'result.{ext}'
-            result_img_tmp.rename(result_img_path)
-            job.job_result['result_img'] = result_img_path.name
-
-        if result_gif_tmp:
-            ext = 'mp4'
-            result_gif_path = job.job_tmpdir / f'result.{ext}'
-            result_gif_tmp.rename(result_gif_path)
-            job.job_result['result_gif'] = result_gif_path.name
+    elif completed and result_img_tmp:
+        ext = 'png'
+        result_img_path = job.job_tmpdir / f'result.{ext}'
+        result_img_tmp.rename(result_img_path)
+        job.job_result['result_img'] = result_img_path.name
 
         # write results
         job.job_status = JobStatus.FINISHED
+        # put into finished jobs, updator coroutine will collect and report
         app.jobs_finished_map[job.job_id] = job
         return web.Response()
 
@@ -715,24 +719,11 @@ def filter_prompt(text: str):
 @routes.post(get_path(f'/{tg_bot_token}'))
 async def telegram(req: web.Request):
     data = await req.json()
-    chat_id = get_param(data, ['message', 'chat', 'id'])
-    msg_id = get_param(data, ['message', 'message_id'])
-    if chat_id in allowed_chat_ids:
-        app: BotServer = req.app
-        msg = get_param(data, ['message'])
-        try:
-            await tg_prompt_handler(app, msg, chat_id)
-        except Exception as e:
-            res = web.Response()
-            await res.prepare(req)
-            await res.write_eof()
-            error_msg = {'chat_id': chat_id, 'text': e.args[0] if e.args else 'Error'}
-            if msg_id:
-                error_msg.update(
-                    {'reply_to_message_id': msg_id, 'allow_sending_without_reply': True}
-                )
-            await app.telegram_sendMessage(error_msg)
-            return res
+    logging.info(f'msg: {data}')
+    app: BotServer = req.app
+
+    await tg_prompt_handler(app, data)
+    await tg_callback_query(app, data)
 
     return web.Response()
 
@@ -744,14 +735,13 @@ def tg_build_update_callback(
         # only send a message
         if msg:
             logging.info(f'Job {job.job_id} sending an update message: {msg}')
-            await app.telegram_sendMessage(
-                {
-                    'chat_id': chat_id,
-                    'text': 'update' if not msg else msg,
-                    'reply_to_message_id': reply_to_message_id,
-                    'allow_sending_without_reply': True,
-                }
-            )
+            message = {
+                'chat_id': chat_id,
+                'text': 'update' if not msg else msg,
+                'reply_to_message_id': reply_to_message_id,
+                'allow_sending_without_reply': True,
+            }
+            await app.telegram_sendMessage(message)
             return
 
         # check if there's any actual progress
@@ -784,6 +774,18 @@ def tg_build_update_callback(
                         'caption': f'{max_index}/{total_steps}',
                         'reply_to_message_id': str(reply_to_message_id),
                         'allow_sending_without_reply': 'true',
+                        'reply_markup': json.dumps(
+                            {
+                                'inline_keyboard': [
+                                    [
+                                        {
+                                            'text': 'Abort',
+                                            'callback_data': f'abort:{job.job_id}',
+                                        }
+                                    ]
+                                ]
+                            }
+                        ),
                     },
                     files={'photo': progress_f},
                 )
@@ -803,7 +805,23 @@ def tg_build_update_callback(
                         {
                             'type': 'photo',
                             'media': f'attach://{Path(max_progress_filepath).name}',
-                            'caption': f'{max_index}/{total_steps}\n\nSeed: {seed}\nWxH: {width}x{height}\nGuidance scale: {guidance_scale}',
+                            'caption': f'{max_index}/{total_steps}\n\n'
+                            f'Seed: {seed}\n'
+                            f'WxH: {width}x{height}\n'
+                            f'Guidance scale: {guidance_scale}\n'
+                            f'Steps: {steps}',
+                        }
+                    ),
+                    'reply_markup': json.dumps(
+                        {
+                            'inline_keyboard': [
+                                [
+                                    {
+                                        'text': 'Abort',
+                                        'callback_data': f'abort:{job.job_id}',
+                                    }
+                                ]
+                            ]
                         }
                     ),
                 },
@@ -823,86 +841,191 @@ def tg_build_finish_callback(
 
         # find out finished result img and gif
         result_img = job.job_tmpdir / job.job_result.get('result_img')
-        result_gif = job.job_tmpdir / job.job_result.get('result_gif')
+        # result_gif = job.job_tmpdir / job.job_result.get('result_gif')
         job_prompt = details.get('prompt', '')
         width, height = details.get('width'), details.get('height')
         steps, seed = details.get('steps'), details.get('seed')
         guidance_scale = details.get('guidance_scale')
-        if not (result_img.exists() and result_gif.exists()):
-            logging.error(
-                f'Job {job.job_id} finished, but missing file: {result_img} or {result_gif}'
-            )
+        if not result_img.exists():
+            logging.error(f'Job {job.job_id} finished, but missing file: {result_img}')
             raise Exception(f'Error: Result file missing')
 
-        with open(result_img, 'rb') as rimg_f, open(result_gif, 'rb') as rgif_f:
+        with open(result_img, 'rb') as rimg_f:
+            if job.update_message_id:
+                await app.telegram_session.post(
+                    get_tg_endpoint('editMessageMedia'),
+                    data={
+                        'chat_id': str(chat_id),
+                        'message_id': job.update_message_id,
+                        'media': json.dumps(
+                            {
+                                'type': 'photo',
+                                'media': f'attach://{result_img.name}',
+                                'caption': f'{job_prompt}\n\n'
+                                f'Seed: {seed}\n'
+                                f'WxH: {width}x{height}\n'
+                                f'Guidance scale: {guidance_scale}\n'
+                                f'Steps: {steps}',
+                            }
+                        ),
+                        'reply_markup': json.dumps(
+                            {
+                                'inline_keyboard': [
+                                    [
+                                        {
+                                            'text': 'Generate process animation',
+                                            'callback_data': f'animation:{job.job_id}',
+                                        }
+                                    ],
+                                    [
+                                        {
+                                            'text': 'Upscale x2',
+                                            'callback_data': f'upscalex2:{job.job_id}',
+                                        },
+                                        {
+                                            'text': 'Upscale x3',
+                                            'callback_data': f'upscalex2:{job.job_id}',
+                                        },
+                                        {
+                                            'text': 'Upscale x4',
+                                            'callback_data': f'upscalex2:{job.job_id}',
+                                        },
+                                    ],
+                                ]
+                            }
+                        ),
+                    },
+                    files={result_img.name: rimg_f},
+                )
             # send result img
-            await app.telegram_session.post(
-                get_tg_endpoint('sendPhoto'),
-                data={
-                    'chat_id': str(chat_id),
-                    'caption': f'{job_prompt}\n\nSeed: {seed}\nWxH: {width}x{height}\nGuidance scale: {guidance_scale}',
-                    'reply_to_message_id': str(reply_to_message_id),
-                    'allow_sending_without_reply': 'true',
-                },
-                files={'photo': rimg_f},
-            )
-            # send result gif
-            await app.telegram_session.post(
-                get_tg_endpoint('sendAnimation'),
-                data={
-                    'chat_id': str(chat_id),
-                    'caption': f'{job_prompt}\n\nSeed: {seed}\nWxH: {width}x{height}\nGuidance scale: {guidance_scale}',
-                    'reply_to_message_id': str(reply_to_message_id),
-                    'allow_sending_without_reply': 'true',
-                },
-                files={'animation': rgif_f},
-            )
-        # clean up
-        app.jobs_queue.remove(job)
-        logging.debug(f'Job {job.job_id} finished, removed from job queue')
+            else:
+                await app.telegram_session.post(
+                    get_tg_endpoint('sendPhoto'),
+                    data={
+                        'chat_id': str(chat_id),
+                        'caption': f'{job_prompt}\n\n'
+                        f'Seed: {seed}\n'
+                        f'WxH: {width}x{height}\n'
+                        f'Guidance scale: {guidance_scale}\n'
+                        f'Steps: {steps}',
+                        'reply_to_message_id': str(reply_to_message_id),
+                        'allow_sending_without_reply': 'true',
+                        'reply_markup': {
+                            'inline_keyboard': [
+                                [
+                                    {
+                                        'text': 'Generate process animation',
+                                        'callback_data': f'animation:{job.job_id}',
+                                    }
+                                ],
+                                [
+                                    {
+                                        'text': 'Upscale x2',
+                                        'callback_data': f'upscalex2:{job.job_id}',
+                                    },
+                                    {
+                                        'text': 'Upscale x3',
+                                        'callback_data': f'upscalex2:{job.job_id}',
+                                    },
+                                    {
+                                        'text': 'Upscale x4',
+                                        'callback_data': f'upscalex2:{job.job_id}',
+                                    },
+                                ],
+                            ]
+                        },
+                    },
+                    files={'photo': rimg_f},
+                )
+        # TODO: clean up
+        # app.jobs_queue.remove(job)
+        # logging.debug(f'Job {job.job_id} finished, removed from job queue')
         logging.debug(f'Job {job.job_id} finish callback done')
 
     return callback
 
 
-async def tg_prompt_handler(app: BotServer, msg: dict, chat_id):
+async def tg_prompt_handler(app: BotServer, update: dict):
+    chat_id = get_param(update, ['message', 'chat', 'id'])
+    msg_id = get_param(update, ['message', 'message_id'])
+    msg = get_param(update, ['message'])
     text = get_param(msg, 'text')
-    logging.debug(f'Reading from message... {text}')
-    words = re.split(r'\s+', text)
 
-    if words[0].startswith('/prompt'):
-        msg_id = msg.get('message_id')
-        words = [word.replace('。', '.').replace('，', ',') for word in words[1:]]
-        extra_param = {}
-        prompt_words = []
-        for word in words:
-            if ':' in word:
-                extra_param.update(dict(re.findall(r'([0-9a-zA-Z\-_]+):(\d+)', word)))
+    if chat_id not in allowed_chat_ids:
+        return
 
-            else:
-                prompt_words.append(word)
+    try:
+        logging.debug(f'Reading from message... {text}')
+        words = re.split(r'\s+', text)
 
-        prompt = filter_prompt(' '.join(prompt_words))
-        logging.info(f'Get prompt: {prompt}')
-        job = Job(
-            job_details={
-                'prompt': prompt,
-                'width': 512,
-                'height': 512,
-                'steps': 50,
-                **extra_param,
-            }
-        )
-        logging.info(f'Try adding new job {job.job_id}')
-        app.add_job(
-            job,
-            update_callback=tg_build_update_callback(
-                app, chat_id=chat_id, reply_to_message_id=msg_id, job=job
-            ),
-            finish_callback=tg_build_finish_callback(
-                app, chat_id=chat_id, reply_to_message_id=msg_id, job=job
-            ),
-        )
+        if words[0].startswith('/prompt'):
+            msg_id = msg.get('message_id')
+            words = [word.replace('。', '.').replace('，', ',') for word in words[1:]]
+            extra_param = {}
+            prompt_words = []
+            for word in words:
+                if ':' in word:
+                    extra_param.update(
+                        dict(re.findall(r'([0-9a-zA-Z\-_]+):(\d+)', word))
+                    )
+
+                else:
+                    prompt_words.append(word)
+
+            prompt = filter_prompt(' '.join(prompt_words))
+            logging.info(f'Get prompt: {prompt}')
+            job = Job(
+                job_details={
+                    'prompt': prompt,
+                    'width': 512,
+                    'height': 512,
+                    'steps': 50,
+                    **extra_param,
+                }
+            )
+            logging.info(f'Try adding new job {job.job_id}')
+            app.add_job(
+                job,
+                update_callback=tg_build_update_callback(
+                    app, chat_id=chat_id, reply_to_message_id=msg_id, job=job
+                ),
+                finish_callback=tg_build_finish_callback(
+                    app, chat_id=chat_id, reply_to_message_id=msg_id, job=job
+                ),
+            )
+    except Exception as e:
+        error_msg = {'chat_id': chat_id, 'text': e.args[0] if e.args else 'Error'}
+        if msg_id:
+            error_msg.update(
+                {'reply_to_message_id': msg_id, 'allow_sending_without_reply': True}
+            )
+        await app.telegram_sendMessage(error_msg)
+
+
+# TODO: Add callback query
+async def tg_callback_query(app: BotServer, update: dict):
+    chat_id = get_param(update, ['callback_query', 'message', 'chat', 'id'])
+    message_id = get_param(update, ['callback_query', 'message', 'message_id'])
+    if chat_id not in allowed_chat_ids:
+        return
+
+    callback_data = get_param(update, ['callback_query', 'data'])
+    if not callback_data:
+        return
+
+    action, job_id, *_ = str(callback_data).split(':')
+    if action in ('animation', 'upscalex2', 'upscalex3', 'upscalex4'):
+        job = app.get_job_by_id(job_id)
+        if not job:
+            pass
+
+        return
+
+    if 'abort' == action:
+        pass
+        return
+
+    return
 
 
 async def init():
