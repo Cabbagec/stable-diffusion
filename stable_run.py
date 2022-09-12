@@ -196,6 +196,7 @@ class ProgressDisplayer:
         self.save_path = Path(save_path)
         self.index = 0
         self.total_steps = None
+        self.abort_flag = False
         self.index_path = {}
         if save_path:
             if not self.save_path.exists() or not self.save_path.is_dir():
@@ -227,10 +228,15 @@ class ProgressDisplayer:
 
     def get_callback(self, model):
         def callback(array, index, total_steps):
+            if self.abort_flag:
+                raise Exception(f'Job aborted')
             image = decode_single_sample_from_model(array, model)
             self.refresh_img(image, index, total_steps)
 
         return callback
+
+    def abort_on_next(self):
+        self.abort_flag = True
 
 
 # In[3]:

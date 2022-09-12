@@ -70,10 +70,16 @@ async def send_progress(
     while True:
         await asyncio.sleep(3)
         try:
+            # abort on abort flag appearing
+            if status_dict.get('abort'):
+                updator.abort_on_next()
+
             job_id = updator.displayer_uuid
             if not updator.index_path:
+                # job hasn't started
                 continue
 
+            # get total steps of job
             total_steps = updator.total_steps
             if total_steps:
                 params['steps'] = total_steps
@@ -187,7 +193,11 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     )
     status_dict.update({'status': 'RUNNING', 'job_id': job_id})
     await send_progress(
-        client=client, total_steps=steps, updator=updator, params=params
+        client=client,
+        total_steps=steps,
+        updator=updator,
+        params=params,
+        status_dict=status_dict,
     )
 
 
