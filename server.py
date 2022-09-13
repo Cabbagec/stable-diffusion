@@ -208,6 +208,8 @@ class Worker:
         self.timeout = int(timeout)
         self.post_destroy = post_destroy
         self.status = status
+        # job_id: ['animation'/'upscalex2'/'upscalex3'/upscalex4']
+        self.resources_to_fetch = {}
         asyncio.create_task(self.self_destroy())
 
     def refresh(self):
@@ -466,19 +468,22 @@ async def heartbeat(req: web.Request):
 @routes.get(get_path('/worker/{worker_id}/job'))
 async def get_job(req: web.Request):
     """
-    /worker/{worker_id}/task
+    /worker/{worker_id}/job
     < response:
     job.job_details
     {
         "job_id": <uuid>,
         "prompt": "",
         "width": 512,
-        "height": 512
+        "height": 512,
+        "steps": 50,
+        "guidance_scale": 7,
+        "seed": ...,
+        "upscale": 4
     }
     or {
         "job_id": <uuid>,
-        "animation": true,      /optional
-        "upscale": 2/3/4,       /optional
+        "resources": ['animation', 'upscalex2', 'upscalex3', 'upscalex4']
     }
     or {}
     """
@@ -496,6 +501,12 @@ async def get_job(req: web.Request):
             f'Worker {worker.worker_id}: worker is not WAITING but trying to get job'
         )
         return web.json_response({})
+
+    # check if worker needs to fetch other resources
+    if worker.resources_to_fetch:
+        job_id, resources = worker.resources_to_fetch.popitem()
+        res = {"job_id": job_id, 'resources': resources}
+        return web.json_response(res)
 
     # find one assigned but still waiting job, resend this one
     try:
