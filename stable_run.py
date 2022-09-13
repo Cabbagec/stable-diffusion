@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+import json
 
 # ### Load packages
 
@@ -196,6 +197,7 @@ class ProgressDisplayer:
         self.displayer = None
         self.save_progress = save_progress
         self.save_path = Path(save_path)
+        self.last_img_path = None
         self.index = 0
         self.total_steps = None
         self.abort_flag = False
@@ -212,9 +214,9 @@ class ProgressDisplayer:
                 print(f'saving progress files to {self.save_path}')
 
     def refresh_img(self, image: Image, index=None, total_steps=None):
-        index = index or self.index
-        self.index += 1
+        self.index = index or self.index
         img_path = self.save_path / f'{index:03d}.png'
+        self.last_img_path = img_path
         self.total_steps = total_steps or self.total_steps
 
         if self.show_progress:
@@ -236,6 +238,17 @@ class ProgressDisplayer:
             self.refresh_img(image, index, total_steps)
 
         return callback
+
+    def finish(self):
+        with open(self.save_path / 'result.json', 'w+') as f:
+            json.dump(
+                {
+                    'job_id': self.displayer_uuid,
+                    'last_img': self.last_img_path,
+                    'last_index': self.index,
+                },
+                fp=f,
+            )
 
     def abort_on_next(self):
         self.abort_flag = True
