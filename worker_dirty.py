@@ -3,13 +3,23 @@ import json
 import logging
 import uuid
 from functools import partial
+from pathlib import Path
 
 import httpx
 
-from stable_run import load_model, get_opt, run as run_task, ProgressDisplayer
+from stable_run import (
+    load_model,
+    get_opt,
+    run as run_task,
+    ProgressDisplayer,
+    generate_animation,
+    generate_upscaled,
+)
 
 token = 'helium'
 url = f'https://bot.everdream.xyz/bot/worker/{token}'
+realesrgan_dir = '/Repositories/realesrgan'
+tmp_save_path = '/tmp'
 
 logging.basicConfig(
     level=logging.INFO, format='[%(asctime)s]:%(levelname)s: %(message)s'
@@ -114,8 +124,56 @@ async def send_progress(
             logging.exception(e)
 
 
+def get_resources(job_desc):
+    resources = job_desc.get('resources')
+    job_id = job_desc.get('job_id')
+    if not resources or not job_id:
+        return
+
+    search_path = Path(tmp_save_path) / job_id
+    job_result = search_path / 'result.json'
+    if not (search_path.exists() and search_path.is_dir() and job_result.exists()):
+        logging.error(
+            f'Cannot find tmp result for job {job_id}, search path: {job_result}'
+        )
+        return
+
+    with open(job_result, 'r') as f:
+        result = json.load(fp=f)
+    if not result:
+        logging.error(f'Tmp result for job {job_id} empty')
+        return
+
+    last_img = result.get('last_img')
+    last_index = result.get('last_index')
+    if None in (last_index, last_img):
+        logging.error(
+            f'Cannot find last image {last_img} or last {last_index} index for job {job_id}'
+        )
+        return
+
+    for resource in resources:
+        if 'animation' == resource:
+            return generate_animation(Path(last_img).parent)
+
+        if 'upscalex2' == resource:
+            return generate_upscaled(last_img, factor=2)
+
+        if 'upscalex3' == resource:
+            return generate_upscaled(last_img, factor=3)
+
+        if 'upscalex4' == resource:
+            return generate_upscaled(last_img, factor=4)
+
+        else:
+            logging.error(f'Unknown resource: {resource}, skipping...')
+
+
 async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     job_id, job_desc = job_dict.popitem()
+    if job_desc.get('resources'):
+        get_resources()
+
     logging.info(f'Got new job {job_id}, {job_desc}, starting...')
     status_dict.update({'job_id': job_id})
     prompt = job_desc.get('prompt')
