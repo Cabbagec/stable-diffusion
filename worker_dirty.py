@@ -80,14 +80,21 @@ async def send_progress(
     while True:
         await asyncio.sleep(3)
         try:
-            # abort on abort flag appearing
-            if status_dict.get('abort'):
-                updator.abort_on_next()
-
             job_id = updator.displayer_uuid
             if not updator.index_path:
                 # job hasn't started
                 continue
+
+            # abort on abort flag appearing
+            if status_dict.get('abort'):
+                updator.abort_on_next()
+                asyncio.create_task(
+                    client.post(
+                        get_endpoint('error'),
+                        json={'job_id': job_id, 'error': 'Job aborted'},
+                    )
+                )
+                break
 
             # get total steps of job
             total_steps = updator.total_steps

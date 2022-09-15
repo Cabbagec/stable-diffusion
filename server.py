@@ -291,6 +291,7 @@ class JobStatus:
     RUNNING = 'RUNNING'
     FINISHED = 'FINISHED'
     FAILED = 'FAILED'
+    ABORT = 'ABORTING'
 
 
 class JobSource:
@@ -458,7 +459,12 @@ class Job:
         if self._job_status != value:
             logging.info(f'Updating job status from {self._job_status} to {value}')
 
-        if value in (JobStatus.WAITING, JobStatus.RUNNING, JobStatus.FAILED):
+        if value in (
+            JobStatus.WAITING,
+            JobStatus.RUNNING,
+            JobStatus.FAILED,
+            JobStatus.ABORT,
+        ):
             self._job_status = value
 
         elif value == JobStatus.FINISHED:
@@ -518,6 +524,10 @@ async def heartbeat(req: web.Request):
                 raise AssertionError(
                     f'Worker {worker.worker_id}: claims job {job.job_id}, but job does not mark worker as its assignee'
                 )
+
+            if job.job_status == JobStatus.ABORT:
+                logging.warning(f'Stopping job {job_id} on worker {worker_id}...')
+                return web.json_response({'abort': True})
 
             if job.job_status != JobStatus.RUNNING:
                 job.job_status = JobStatus.RUNNING
@@ -1199,7 +1209,8 @@ async def tg_callback_query(app: BotServer, update: dict):
         return
 
     if 'abort' == action:
-        pass
+        job.job_status = JobStatus.ABORT
+        logging.warning(f'Trying to abort job...')
         return
 
     return
