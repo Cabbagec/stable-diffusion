@@ -152,27 +152,32 @@ def get_resources(job_desc):
         )
         return
 
+    results = {}
     for resource in resources:
         if 'animation' == resource:
-            return generate_animation(Path(last_img).parent)
+            results['animation'] = generate_animation(Path(last_img).parent)
 
-        if 'upscalex2' == resource:
-            return generate_upscaled(last_img, factor=2)
+        elif 'upscalex2' == resource:
+            results['upscalex2'] = generate_upscaled(last_img, factor=2)
 
-        if 'upscalex3' == resource:
-            return generate_upscaled(last_img, factor=3)
+        elif 'upscalex3' == resource:
+            results['upscalex3'] = generate_upscaled(last_img, factor=3)
 
-        if 'upscalex4' == resource:
-            return generate_upscaled(last_img, factor=4)
+        elif 'upscalex4' == resource:
+            results['upscalex4'] = generate_upscaled(last_img, factor=4)
 
         else:
             logging.error(f'Unknown resource: {resource}, skipping...')
+
+    return results
 
 
 async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     job_id, job_desc = job_dict.popitem()
     if job_desc.get('resources'):
-        get_resources()
+        # dict of resource paths
+        # TODO: send resoures
+        resources = get_resources(job_desc)
 
     logging.info(f'Got new job {job_id}, {job_desc}, starting...')
     status_dict.update({'job_id': job_id})
