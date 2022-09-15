@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import uuid
-from collections import deque
+from collections import deque, defaultdict
 from pathlib import Path, PurePath
 from typing import Dict, Deque
 
@@ -64,6 +64,11 @@ class BotServer(web.Application):
         self.jobs_queue: Deque[Job] = deque()
         self.jobs_updated_map = {}
         self.jobs_finished_map = {}
+        # jobs whose messages need to be updated
+        self.jobs_update_message = {}
+        # jobs whose resources need to be fetched
+        # 'animation': [job_id1, job_id2, ...]
+        # self.jobs_fetch_resources_map = defaultdict(list)
 
         _cache_dir = Path(cache_dir)
         if _cache_dir.exists():
@@ -102,7 +107,11 @@ class BotServer(web.Application):
         job.update_callback = update_callback
         job.finish_callback = finish_callback
         self.jobs_queue.append(job)
-        exec_callback(update_callback, msg='🤩 Job added, waiting for generating...')
+        exec_callback(
+            # Add confirm msg and abort reply callback
+            update_callback,
+            msg='🤩 Job added, waiting for generating...',
+        )
         logging.info(f'New job added: {job.job_id}, detail: {job.job_details}')
 
     def add_worker(self, worker_id, status=None, timeout=10):
@@ -171,6 +180,13 @@ class BotServer(web.Application):
                 logging.info(f'Job {job_id}: calling finish callback')
                 exec_callback(job.finish_callback)
 
+            while self.jobs_update_message:
+                job_id, job = self.jobs_update_message.popitem()
+                logging.info(
+                    f'Job {job_id}: updating other resources info: {job.other_resources}'
+                )
+                exec_callback(job.update_callback, update_job_resources=True)
+
     # telegram related
     async def start_bot_session(self):
         logging.debug(f'start session...')
@@ -193,6 +209,22 @@ class BotServer(web.Application):
 
     async def telegram_sendMessage(self, msg):
         await self.telegram_session.post(get_tg_endpoint('sendMessage'), json=msg)
+
+    # async def update_job_message(self, job_id):
+    #     job = self.get_job_by_id(job_id)
+    #     if not job:
+    #         return
+    #
+    #     if not job.update_message_id:
+    #         logging.error(
+    #             f'cannot update message for job {job_id}, update message is not sent yet'
+    #         )
+    #         return
+    #
+    #     await self.telegram_session.post(get_tg_endpoint('editMessageReplyMarkup'), data={
+    #         'chat_id':
+    #     })
+    #
 
 
 class WorkerStatus:
@@ -315,8 +347,8 @@ class Job:
         self.job_assignee = assignee
         self.job_source = job_source
 
-        self.animation_sent = False
-        self.upscaled_sent = False
+        # self.animation_sent = False
+        # self.upscaled_sent = False
 
         if tmp_dir:
             tmp_dir = Path(tmp_dir)
@@ -329,7 +361,7 @@ class Job:
         if job_details:
             self.job_details = job_details
 
-        # others
+        # update message and others
         self.update_message_id = ''
 
     def update_job_progress(self, index: int, filename: str):
@@ -880,30 +912,7 @@ def tg_build_finish_callback(
                             }
                         ),
                         'reply_markup': json.dumps(
-                            {
-                                'inline_keyboard': [
-                                    [
-                                        {
-                                            'text': 'Generate process animation',
-                                            'callback_data': f'animation:{job.job_id}',
-                                        }
-                                    ],
-                                    [
-                                        {
-                                            'text': 'Upscale x2',
-                                            'callback_data': f'upscalex2:{job.job_id}',
-                                        },
-                                        {
-                                            'text': 'Upscale x3',
-                                            'callback_data': f'upscalex2:{job.job_id}',
-                                        },
-                                        {
-                                            'text': 'Upscale x4',
-                                            'callback_data': f'upscalex2:{job.job_id}',
-                                        },
-                                    ],
-                                ]
-                            }
+                            {'inline_keyboard': job.get_inline_keyboard()}
                         ),
                     },
                     files={result_img.name: rimg_f},
@@ -921,30 +930,9 @@ def tg_build_finish_callback(
                         f'Steps: {steps}',
                         'reply_to_message_id': str(reply_to_message_id),
                         'allow_sending_without_reply': 'true',
-                        'reply_markup': {
-                            'inline_keyboard': [
-                                [
-                                    {
-                                        'text': 'Generate process animation',
-                                        'callback_data': f'animation:{job.job_id}',
-                                    }
-                                ],
-                                [
-                                    {
-                                        'text': 'Upscale x2',
-                                        'callback_data': f'upscalex2:{job.job_id}',
-                                    },
-                                    {
-                                        'text': 'Upscale x3',
-                                        'callback_data': f'upscalex2:{job.job_id}',
-                                    },
-                                    {
-                                        'text': 'Upscale x4',
-                                        'callback_data': f'upscalex2:{job.job_id}',
-                                    },
-                                ],
-                            ]
-                        },
+                        'reply_markup': json.dumps(
+                            {'inline_keyboard': job.get_inline_keyboard()}
+                        ),
                     },
                     files={'photo': rimg_f},
                 )
