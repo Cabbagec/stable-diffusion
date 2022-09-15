@@ -967,7 +967,7 @@ def tg_build_update_callback(
 
         width, height = details.get('width'), details.get('height')
         steps, seed = details.get('steps'), details.get('seed')
-        guidance_scale = details.get('guidance_scale')
+        guidance_scale = details.get('guidance_scale') or details.get('scale')
 
         # create the progress message
         if not job.update_message_id:
