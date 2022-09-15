@@ -141,6 +141,8 @@ def get_resources(job_desc):
 
     with open(job_result, 'r') as f:
         result = json.load(fp=f)
+        logging.info(f'job result detail at {job_result} loaded: {result}')
+
     if not result:
         logging.error(f'Tmp result for job {job_id} empty')
         return
@@ -154,18 +156,19 @@ def get_resources(job_desc):
         return
 
     results = {}
+    last_img = Path(last_img)
     for resource in resources:
         if 'animation' == resource:
-            results['animation'] = generate_animation(Path(last_img).parent)
+            results[resource] = generate_animation(last_img.parent)
 
-        elif 'upscalex2' == resource:
-            results['upscalex2'] = generate_upscaled(last_img, factor=2)
+        elif 'Upscale x2' == resource:
+            results[resource] = generate_upscaled(last_img, factor=2)
 
-        elif 'upscalex3' == resource:
-            results['upscalex3'] = generate_upscaled(last_img, factor=3)
+        elif 'Upscale x3' == resource:
+            results[resource] = generate_upscaled(last_img, factor=3)
 
-        elif 'upscalex4' == resource:
-            results['upscalex4'] = generate_upscaled(last_img, factor=4)
+        elif 'Upscale x4' == resource:
+            results[resource] = generate_upscaled(last_img, factor=4)
 
         else:
             logging.error(f'Unknown resource: {resource}, skipping...')
@@ -173,12 +176,29 @@ def get_resources(job_desc):
     return results
 
 
+async def send_resource(client, job_id, resource_name, resource_path):
+    resource_path = Path(resource_path)
+    with open(resource_path, 'rb') as f:
+        await client.post(
+            get_endpoint('resource'),
+            data={'job_id': job_id, 'resource_type': resource_name},
+            files={'resource': (resource_path.name, f)},
+        )
+        logging.info(f'resource {resource_path} sent')
+
+
 async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     job_id, job_desc = job_dict.popitem()
     if job_desc.get('resources'):
         # dict of resource paths
-        # TODO: send resoures
-        resources = get_resources(job_desc)
+        # just send resources and exit current job
+        for resource_type, resource_path in get_resources(job_desc).items():
+            logging.info(
+                f'sending resource {resource_type} at {resource_path} to server on job {job_id}'
+            )
+            await send_resource(client, job_id, resource_type, resource_path)
+
+        return
 
     logging.info(f'Got new job {job_id}, {job_desc}, starting...')
     status_dict.update({'job_id': job_id})
