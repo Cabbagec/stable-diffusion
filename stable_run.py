@@ -544,6 +544,7 @@ def run(opt, model, progress_displayer=None):
                 toc = time.time()
 
     torch.cuda.empty_cache()
+    progress_displayer.finish()
     print(
         f"Your samples are ready and waiting for you here: \n{outpath} \n" f" \nEnjoy."
     )
