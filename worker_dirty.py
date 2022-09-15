@@ -227,7 +227,10 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     }
     opt = get_opt(**params)
     updator = ProgressDisplayer(
-        show_progress=False, save_progress=True, displayer_uuid=job_id
+        show_progress=False,
+        save_progress=True,
+        displayer_uuid=job_id,
+        save_path=tmp_save_path,
     )
     f = asyncio.get_event_loop().run_in_executor(
         None, partial(run_task, opt, model, updator)
