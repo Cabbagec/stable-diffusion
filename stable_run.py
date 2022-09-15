@@ -243,7 +243,7 @@ class ProgressDisplayer:
             json.dump(
                 {
                     'job_id': self.displayer_uuid,
-                    'last_img': self.last_img_path,
+                    'last_img': str(self.last_img_path),
                     'last_index': self.index,
                 },
                 fp=f,
@@ -588,7 +588,7 @@ def generate_upscaled(image_path: Path, factor: int, filename=None):
     if (
         subprocess.run(
             [
-                'realesrgan-ncnn-vulkan',
+                './realesrgan-ncnn-vulkan',
                 '-i',
                 str(image_path),
                 '-o',
