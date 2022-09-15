@@ -232,6 +232,7 @@ class ProgressDisplayer:
     def get_callback(self, model):
         def callback(array, index, total_steps):
             if self.abort_flag:
+                torch.cuda.empty_cache()
                 raise Exception(f'Job aborted')
             image = decode_single_sample_from_model(array, model)
             self.refresh_img(image, index, total_steps)
