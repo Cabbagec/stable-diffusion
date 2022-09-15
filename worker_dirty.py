@@ -107,6 +107,7 @@ async def send_progress(
                         },
                         files={'result_img': ('result.png', img_f)},
                     )
+                    break
             else:
                 logging.info(f'sending step: {max_index}')
                 with open(filepath, 'rb') as pf:
