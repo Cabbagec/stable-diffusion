@@ -214,7 +214,7 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     if width % 64 != 0 or height % 64 != 0:
         raise Exception(f'Width and height must be factors of 64.')
 
-    if (width * height) > (512 * 512 * 1.2):
+    if (width * height) > (512 * 512 * 1.25):
         raise Exception(f'Image too large, try use smaller width and height')
 
     params = {
