@@ -241,7 +241,7 @@ class Worker:
         self.post_destroy = post_destroy
         self.status = status
         # job_id: ['animation'/'upscalex2'/'upscalex3'/upscalex4']
-        self.resources_to_fetch = {}
+        self.resources_to_fetch = defaultdict(list)
         asyncio.create_task(self.self_destroy())
 
     def refresh(self):
@@ -327,6 +327,10 @@ class Job:
         'steps',
         'guidance_scale',
         'seed',
+        # enable/disable animation
+        'animation',
+        # scale factor, 2/3/4
+        'upscale',
     )
 
     def __init__(
@@ -363,6 +367,35 @@ class Job:
 
         # update message and others
         self.update_message_id = ''
+        # inline keyboard
+        self.other_resources = [
+            #
+            'animation',
+            # broken
+            # 'Upscale x2',
+            # 'Upscale x3',
+            'Upscale x4',
+        ]
+
+    def get_inline_keyboard(self):
+        inline_keyboard = {}
+        for resource in self.other_resources:
+            if 'animation' == resource:
+                inline_keyboard[1] = [
+                    {
+                        'text': 'Generate process animation',
+                        'callback_data': f'animation:{self.job_id}',
+                    }
+                ]
+
+            if resource.lower().startswith('upscale'):
+                if not inline_keyboard.get(2):
+                    inline_keyboard[2] = []
+
+                inline_keyboard[2].append(
+                    {'text': resource, 'callback_data': f'{resource}:{self.job_id}'}
+                )
+        return list(inline_keyboard.values())
 
     def update_job_progress(self, index: int, filename: str):
         filepath = self.job_tmpdir / str(filename)
@@ -611,8 +644,59 @@ async def error(req: web.Request):
         err = req_data.get('error', '')
         job.job_status = JobStatus.FAILED
         exec_callback(job.update_callback, msg=err)
-        app.jobs_queue.remove(job)
+        # app.jobs_queue.remove(job)
         return web.Response()
+
+
+@routes.post(get_path('/worker/{worker_id}/resource'))
+async def post_resource(req: web.Request):
+    """
+    /worer/{worker_id}/resource
+        "job_id": ,
+        "resource_type": "animation/Upscale x2/Upscale x3/Upscale x4"
+        "resource": <file: xxx.xxx>
+    """
+    app: BotServer = req.app
+    worker = app.get_worker(req.match_info['worker_id'])
+    if not worker:
+        logging.error(f'Unregistered worker uploading resources, rejecting...')
+        return
+
+    job_id = resource_type = filename = ''
+    tmp_path = app.tmp_dir / str(uuid.uuid4())
+    async for field in (await req.multipart()):
+        if field.name == 'job_id':
+            job_id = (await field.read()).decode()
+
+        elif field.name == 'resource_type':
+            resource_type = (await field.read()).decode()
+
+        elif field.name == 'resource':
+            filename = field.filename
+            await app.write_field(field, path=tmp_path)
+
+        else:
+            logging.error(
+                f'Unknown field {field.name} from worker {worker.worker_id} resources'
+            )
+
+    if job_id and resource_type and filename and tmp_path.exists():
+        logging.info(
+            f'Resources {resource_type} of job {job_id} received from worker {worker.worker_id}'
+        )
+        job = app.get_job_by_id(job_id)
+        # assert job
+        # assert job.job_assignee is worker
+        # assert job.job_status == JobStatus.FINISHED
+        file_path = job.job_tmpdir / filename
+        tmp_path.rename(file_path)
+        exec_callback(job.update_callback, send_resources={resource_type: file_path})
+
+    else:
+        logging.error(
+            f'resources received, but some fields are empty.'
+            f'job_id: {job_id}, resource_type: {resource_type}, filename: {filename}, worker_id: {worker.worker_id}'
+        )
 
 
 @routes.post(get_path('/worker/{worker_id}/report'))
@@ -774,7 +858,9 @@ async def telegram(req: web.Request):
 def tg_build_update_callback(
     app: BotServer, chat_id: int, reply_to_message_id: int, job: Job
 ):
-    async def callback(msg=None):
+    async def callback(
+        msg=None, update_job_resources=False, send_resources: dict = None
+    ):
         # only send a message
         if msg:
             logging.info(f'Job {job.job_id} sending an update message: {msg}')
@@ -785,6 +871,82 @@ def tg_build_update_callback(
                 'allow_sending_without_reply': True,
             }
             await app.telegram_sendMessage(message)
+            return
+
+        # only update resources for job
+        if update_job_resources:
+            logging.info(
+                f'updating available resources of job {job.job_id} in update message'
+            )
+            update_message_id = job.update_message_id
+            if not update_message_id:
+                logging.error(
+                    f'job {job.job_id} hasn\'t sent update message yet, no message id'
+                )
+                return
+
+            message = {
+                'chat_id': chat_id,
+                'message_id': update_message_id,
+                'reply_markup': json.dumps(
+                    {'inline_keyboard': job.get_inline_keyboard()}
+                ),
+            }
+            await app.telegram_session.post(
+                get_tg_endpoint('editMessageReplyMarkup'), data=message
+            )
+            return
+
+        # {'resource_type': Path(resource_filepath)}
+        if send_resources:
+            while send_resources:
+                resource_type, resource_path = send_resources.popitem()
+                resource_path = Path(resource_path)
+                logging.info(f'preparing resource {resource_type} at {resource_path}')
+                with open(resource_path, 'rb') as f:
+                    if resource_type.lower().startswith('upscale'):
+                        logging.info(f'upscale resource: {resource_type}')
+                        res = await app.telegram_session.post(
+                            get_tg_endpoint('sendDocument'),
+                            data={
+                                'chat_id': str(chat_id),
+                                'reply_to_message_id': str(job.update_message_id),
+                                'allow_sending_without_reply': 'true',
+                            },
+                            files={'document': (resource_path.name, f)},
+                        )
+                        logging.info(
+                            f'upscale resource: {resource_type} sent as document, result: {res.json()}'
+                        )
+
+                    elif resource_type.lower() == 'animation':
+                        details = job.job_details
+                        prompt = details.get('prompt')
+                        steps = details.get('steps')
+                        width = details.get('width')
+                        height = details.get('height')
+                        seed = details.get('seed')
+                        guidance_scale = details.get('scale') or details.get(
+                            'guidance_scale'
+                        )
+
+                        await app.telegram_session.post(
+                            get_tg_endpoint('sendAnimation'),
+                            data={
+                                'chat_id': chat_id,
+                                'caption': f'{prompt}\n\n'
+                                f'Seed: {seed}\n'
+                                f'WxH: {width}x{height}\n'
+                                f'Guidance scale: {guidance_scale}\n'
+                                f'Steps: {steps}',
+                            },
+                            files={'animation': f},
+                        )
+
+                    else:
+                        logging.error(
+                            f'Unknown resource type {resource_type}, cannot send to chat'
+                        )
             return
 
         # check if there's any actual progress
@@ -1013,10 +1175,26 @@ async def tg_callback_query(app: BotServer, update: dict):
         return
 
     action, job_id, *_ = str(callback_data).split(':')
-    if action in ('animation', 'upscalex2', 'upscalex3', 'upscalex4'):
-        job = app.get_job_by_id(job_id)
+    logging.info(f'callback received, action: {action}, job: {job_id}')
+
+    job = app.get_job_by_id(job_id)
+    if action in ('animation', 'Upscale x2', 'Upscale x3', 'Upscale x4'):
         if not job:
+            logging.error(f'cannot find job {job_id} for action {action}')
+            return
+
+        if not job.job_assignee:
+            logging.error(f'cannot find job assignee')
+
+        # if 'animation' == action:
+        try:
+            job.other_resources.remove(action)
+        except ValueError:
             pass
+        app.jobs_update_message[job_id] = job
+        assignee: Worker = job.job_assignee
+        assignee.resources_to_fetch[job_id].append(action)
+        # app.jobs_fetch_resources_map[action].append(job_id)
 
         return
 
