@@ -260,7 +260,7 @@ async def main():
         # asyncio.create_task(get_task_and_run(model, job_dict))
         try:
             await asyncio.wait_for(
-                get_task_and_run(client, model, job_dict, status_dict), timeout=120
+                get_task_and_run(client, model, job_dict, status_dict), timeout=200
             )
         except asyncio.TimeoutError:
             logging.error(f'current job timed out')
