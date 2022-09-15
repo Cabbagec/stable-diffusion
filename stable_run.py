@@ -46,7 +46,6 @@ from ldm.util import instantiate_from_config
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from os import devnull
 
-
 # ### Load functions
 
 # In[2]:
@@ -550,37 +549,42 @@ def run(opt, model, progress_displayer=None):
     )
 
 
-def generate_animation(dir_path: Path):
+def generate_animation(
+    dir_path: Path, fps=24, glob='*.png', encoder='libx264', filename='output.mp4'
+):
     logging.info(f'generating animation for pics in {dir_path}')
     if (
         subprocess.run(
             [
                 'ffmpeg',
                 '-framerate',
-                '24',
+                str(fps),
                 '-pattern_type',
                 'glob',
                 '-i',
-                '*.png',
+                glob,
                 '-c:v',
-                'libx264',
+                encoder,
                 '-pix_fmt',
                 'yuv420p',
-                'output.mp4',
+                filename,
             ],
             cwd=dir_path,
         ).returncode
         == 0
     ):
-        animation_filepath = dir_path / "output.mp4"
+        animation_filepath = dir_path / filename
         logging.info(f'generated: {animation_filepath}')
         return animation_filepath
 
+    logging.error(f'failed to generate animation for images in path {dir_path}')
 
-def generate_upscaled(image_path: Path, factor: int):
+
+def generate_upscaled(image_path: Path, factor: int, filename=None):
     logging.info(f'generating upscaled version for {image_path}')
-    upscaled_filepath = image_path.parent / 'output.jpg'
     factor = 4 if factor not in (2, 3, 4) else factor
+    filename = f'output_x{factor}.jpg' if not filename else filename
+    upscaled_filepath = image_path.parent / filename
     if (
         subprocess.run(
             [
@@ -604,6 +608,8 @@ def generate_upscaled(image_path: Path, factor: int):
             f'image upscaled: {image_path}, output: {upscaled_filepath}, factor: {factor}'
         )
         return upscaled_filepath
+
+    logging.error(f'failed to generate upscaled image: {upscaled_filepath}')
 
 
 # ### Run!
