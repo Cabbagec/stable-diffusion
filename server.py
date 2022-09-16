@@ -1060,7 +1060,7 @@ def tg_build_finish_callback(
         job_prompt = details.get('prompt', '')
         width, height = details.get('width'), details.get('height')
         steps, seed = details.get('steps'), details.get('seed')
-        guidance_scale = details.get('guidance_scale')
+        guidance_scale = details.get('guidance_scale') or details.get('scale')
         if not result_img.exists():
             logging.error(f'Job {job.job_id} finished, but missing file: {result_img}')
             raise Exception(f'Error: Result file missing')
