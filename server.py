@@ -81,7 +81,7 @@ class BotServer(web.Application):
         # TODO: rate limit from telegram
         self.rate_limits = {'TELEGRAM': 0}
 
-        self.telegram_session = httpx.AsyncClient(http2=True)
+        self.telegram_session = httpx.AsyncClient(http2=False)
         self.set_ssl_cert = None
 
     def add_job(self, job: 'Job', update_callback=None, finish_callback=None):
