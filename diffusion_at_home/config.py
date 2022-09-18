@@ -2,6 +2,10 @@ tg_bot_token = 'token'
 
 # White lists
 allowed_chat_ids = [123]
+
+# web clients
+web_client_tokens = ['test_client']
+
 allowed_commands = [
     {
         'command': 'prompt',

@@ -11,10 +11,12 @@ async def init():
     from diffusion_at_home.instance.app_server import BotServer
     from diffusion_at_home.endpoints.telegram import routes as tg_routes
     from diffusion_at_home.endpoints.worker import routes as worker_routes
+    from diffusion_at_home.endpoints.web import routes as web_routes
 
     app = BotServer()
     app.add_routes(tg_routes)
     app.add_routes(worker_routes)
+    app.add_routes(web_routes)
     await app.start_bot_session()
     return app
 
