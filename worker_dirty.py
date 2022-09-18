@@ -263,7 +263,7 @@ async def main():
     status_dict = {}
     # model = object()
     client = httpx.AsyncClient(
-        http2=True,
+        http2=False,
         proxies='http://127.0.0.1:8123',
         # proxies='http://127.0.0.1:8889',
         # verify='/etc/ssl/cert.pem'
