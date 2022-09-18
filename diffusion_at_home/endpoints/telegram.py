@@ -373,25 +373,6 @@ async def tg_callback_query(app: BotServer, update: dict):
         if not job.job_assignee:
             logging.error(f'cannot find job assignee')
 
-        try:
-            # remove keyboard elements once clicked on
-            job.other_resources.remove(action)
-        except ValueError:
-            pass
-
-        # send inline keyboard edit message
-        exec_callback(
-            app.telegram_session.post,
-            get_tg_endpoint('editMessageReplyMarkup'),
-            data={
-                'chat_id': job.chat_id,
-                'message_id': job.update_message_id,
-                'reply_markup': json.dumps(
-                    {'inline_keyboard': job.get_inline_keyboard()}
-                ),
-            },
-        )
-        # app.jobs_update_message[job_id] = job
         assignee: Worker = job.job_assignee
         assignee.resources_to_fetch[job_id].append(action)
 
