@@ -405,7 +405,7 @@ async def tg_callback_query(app: BotServer, update: dict):
             logging.error(f'cannot find job assignee')
 
         assignee: Worker = job.job_assignee
-        assignee.resources_to_fetch[job_id].append(action)
+        assignee.resources_to_fetch[job_id].add(action)
 
         return
 

@@ -17,7 +17,7 @@ class Worker:
         self.post_destroy = post_destroy
         self.status = status
         # job_id: ['animation'/'upscalex2'/'upscalex3'/upscalex4']
-        self.resources_to_fetch = defaultdict(list)
+        self.resources_to_fetch = defaultdict(set)
         asyncio.create_task(self.self_destroy())
 
     def refresh(self):

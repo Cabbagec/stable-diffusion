@@ -112,7 +112,7 @@ async def get_job(req: web.Request):
     # check if worker needs to fetch other resources
     if worker.resources_to_fetch:
         job_id, resources = worker.resources_to_fetch.popitem()
-        res = {"job_id": job_id, 'resources': resources}
+        res = {"job_id": job_id, 'resources': list(resources)}
         return web.json_response(res)
 
     # find one assigned but still waiting job, resend this one
