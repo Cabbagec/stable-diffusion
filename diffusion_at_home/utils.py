@@ -22,6 +22,23 @@ def exec_callback(callback, *args, **kwargs):
             callback(*args, **kwargs)
 
 
+def exec_callback_chain(*callbacks):
+    async def chain():
+        for callback in callbacks:
+            if asyncio.iscoroutinefunction(callback):
+                await callback()
+
+            elif callable(callback):
+                callback()
+
+            else:
+                logging.error(
+                    f'Unknown callback: {callback}, not a coroutine function nor a function'
+                )
+
+    exec_callback(chain)
+
+
 def get_param(data: dict, params, default=None):
     if not isinstance(data, dict):
         return data if not params else default
