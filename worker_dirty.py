@@ -35,7 +35,7 @@ async def heartbeat(client, status_dict: dict):
         logging.info(f'heartbeating after 5...')
         try:
             await asyncio.sleep(5)
-            r = await client.post(
+            await client.post(
                 get_endpoint('heartbeat'),
                 json={
                     'status': status_dict.get('status', 'WAITING'),
@@ -43,8 +43,8 @@ async def heartbeat(client, status_dict: dict):
                 },
             )
             # abort job
-            if r.json().get('abort'):
-                status_dict['abort'] = True
+            # if r.json().get('abort'):
+            #     status_dict['abort'] = True
 
         except Exception as e:
             logging.exception(e)
@@ -105,7 +105,7 @@ async def send_progress(
             if max_index >= total_steps - 1:
                 logging.info(f'generation of last pic done')
                 with open(filepath, 'rb') as img_f:
-                    await client.post(
+                    r = await client.post(
                         get_endpoint('report'),
                         data={
                             'completed': 'true',
@@ -118,7 +118,7 @@ async def send_progress(
             else:
                 logging.info(f'sending step: {max_index}')
                 with open(filepath, 'rb') as pf:
-                    await client.post(
+                    r = await client.post(
                         get_endpoint('report'),
                         data={
                             'index': max_index,
@@ -127,6 +127,10 @@ async def send_progress(
                         },
                         files={'file': pf},
                     )
+
+            if r.json().get('abort'):
+                updator.abort_on_next()
+
         except Exception as e:
             logging.error(f'send progress failed with {e}')
             logging.exception(e)
