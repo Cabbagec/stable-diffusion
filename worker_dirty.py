@@ -87,6 +87,7 @@ async def send_progress(
 
             # abort on abort flag appearing
             if status_dict.get('abort'):
+                status_dict.pop('abort', None)
                 updator.abort_on_next()
                 asyncio.create_task(
                     client.post(
@@ -129,7 +130,7 @@ async def send_progress(
                     )
 
             if r.json().get('abort'):
-                updator.abort_on_next()
+                status_dict['abort'] = True
 
         except Exception as e:
             logging.error(f'send progress failed with {e}')
