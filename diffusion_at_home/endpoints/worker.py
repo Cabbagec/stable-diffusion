@@ -185,7 +185,7 @@ async def error(req: web.Request):
     if job:
         err = req_data.get('error', '')
         job.job_status = JobStatus.FAILED
-        exec_callback(job.update_callback, msg=err)
+        # exec_callback(job.update_callback, msg=err)
         # app.jobs_queue.remove(job)
         return web.Response()
 
