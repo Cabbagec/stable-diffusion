@@ -4,8 +4,11 @@ import uuid
 
 from aiohttp import web
 
-from diffusion_at_home import BotServer, routes, Worker, WorkerStatus, JobStatus
-from diffusion_at_home.utils import exec_callback
+from diffusion_at_home.instance.app_server import BotServer
+from diffusion_at_home.instance.job import JobStatus
+from diffusion_at_home.instance.worker import Worker, WorkerStatus
+
+routes = web.RouteTableDef()
 
 
 def get_path(v):

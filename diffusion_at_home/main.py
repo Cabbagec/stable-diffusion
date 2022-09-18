@@ -8,8 +8,13 @@ logging.basicConfig(
 
 
 async def init():
+    from diffusion_at_home.instance.app_server import BotServer
+    from diffusion_at_home.endpoints.telegram import routes as tg_routes
+    from diffusion_at_home.endpoints.worker import routes as worker_routes
+
     app = BotServer()
-    app.add_routes(routes)
+    app.add_routes(tg_routes)
+    app.add_routes(worker_routes)
     await app.start_bot_session()
     return app
 

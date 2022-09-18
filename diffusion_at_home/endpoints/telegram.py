@@ -20,6 +20,8 @@ from diffusion_at_home.utils import (
     exec_callback,
 )
 
+routes = web.RouteTableDef()
+
 
 def get_path(v):
     return f'/bot{v}'
