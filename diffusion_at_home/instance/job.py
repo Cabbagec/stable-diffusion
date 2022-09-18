@@ -216,11 +216,54 @@ class Job:
 
     @job_status.setter
     def job_status(self, value):
+        if (
+            (
+                self._job_status == JobStatus.WAITING
+                and value
+                in (
+                    JobStatus.WAITING,
+                    JobStatus.ABORT,
+                    JobStatus.RUNNING,
+                    JobStatus.FAILED,
+                )
+            )
+            or (
+                self._job_status == JobStatus.RUNNING
+                and value
+                in (
+                    JobStatus.RUNNING,
+                    JobStatus.ABORT,
+                    JobStatus.FINISHED,
+                    JobStatus.FAILED,
+                )
+            )
+            or (
+                self._job_status == JobStatus.FINISHED
+                and value in (JobStatus.FINISHED,)
+            )
+            or (self._job_status == JobStatus.FAILED and value in (JobStatus.FAILED,))
+            or (
+                self._job_status == JobStatus.ABORT
+                and value in (JobStatus.ABORT, JobStatus.FINISHED, JobStatus.FAILED)
+            )
+        ):
+            # status check
+            pass
+
+        else:
+            logging.error(
+                f'Cannot update job status from {self._job_status} to {value}'
+            )
+            return
+
         if self._job_status != value:
             logging.info(f'Updating job status from {self._job_status} to {value}')
+            self._job_status = value
+        else:
+            return
 
         if value in (JobStatus.WAITING, JobStatus.RUNNING, JobStatus.ABORT):
-            self._job_status = value
+            pass
 
         elif value == JobStatus.FINISHED:
             self._job_status = value
