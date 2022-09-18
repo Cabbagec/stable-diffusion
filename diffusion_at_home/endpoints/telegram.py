@@ -210,6 +210,24 @@ def build_resource_update_callback(app: BotServer):
             )
             return
 
+        # update keyboard
+        try:
+            job.other_resources.remove(resource_type)
+        except ValueError:
+            logging.error(f'Resource {resource_type} may have already been updated')
+
+        exec_callback(
+            app.telegram_session.post,
+            get_tg_endpoint('editMessageReplyMarkup'),
+            data={
+                'chat_id': job.chat_id,
+                'message_id': job.update_message_id,
+                'reply_markup': json.dumps(
+                    {'inline_keyboard': job.get_inline_keyboard()}
+                ),
+            },
+        )
+
         with open(resource_path, 'rb') as f:
             if resource_type.lower().startswith('upscale'):
                 logging.info(f'sending upscale resource: {resource_type}')
