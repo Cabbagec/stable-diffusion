@@ -1,0 +1,12 @@
+[Unit]
+Description=Stable Diffusion Worker
+After=network.target
+
+[Service]
+User=<user>
+WorkingDirectory=/home/<user>/stable-diffusion
+ExecStart=/usr/bin/python /home/<user>/stable-diffusion/worker_dirty.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

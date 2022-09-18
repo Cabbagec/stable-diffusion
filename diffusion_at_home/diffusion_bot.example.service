@@ -1,0 +1,11 @@
+[Unit]
+Description=Telegram Diffusion@Home Bot
+After=network.target
+
+[Service]
+Environment=PYTHONPATH=/root
+WorkingDirectory=/root/diffusion_at_home
+ExecStart=/usr/bin/python /root/diffusion_at_home/main.py
+
+[Install]
+WantedBy=default.target
