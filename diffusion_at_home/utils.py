@@ -1,7 +1,8 @@
 import asyncio
+import logging
 import re
 
-from diffusion_at_home import telegram_bot_api_server
+from diffusion_at_home.config import telegram_bot_api_server
 
 
 def get_tg_endpoint(name):

@@ -5,17 +5,14 @@ from pathlib import Path
 
 from aiohttp import web
 
-from diffusion_at_home import (
+from diffusion_at_home.config import tg_bot_token, allowed_chat_ids
+from diffusion_at_home.instance.app_server import (
     BotServer,
-    routes,
-    Job,
-    JobStatus,
-    Worker,
-    JobSource,
     ServerException,
     ServerJobWaitingException,
 )
-from diffusion_at_home.config import tg_bot_token, allowed_chat_ids
+from diffusion_at_home.instance.job import Job, JobStatus, JobSource
+from diffusion_at_home.instance.worker import Worker
 from diffusion_at_home.utils import (
     get_tg_endpoint,
     get_param,

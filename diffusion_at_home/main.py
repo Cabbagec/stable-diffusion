@@ -1,5 +1,3 @@
-from diffusion_at_home import *
-
 import logging
 
 from aiohttp import web

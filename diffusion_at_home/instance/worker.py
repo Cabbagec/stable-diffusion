@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
 
 
 class WorkerStatus:

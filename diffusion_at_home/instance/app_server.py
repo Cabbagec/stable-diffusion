@@ -6,18 +6,10 @@ from typing import Dict, Deque
 import httpx
 from aiohttp import web, BodyPartReader
 
-from diffusion_at_home import (
-    Worker,
-    WorkerStatus,
-    Job,
-    JobStatus,
-    cache_dir,
-    get_tg_endpoint,
-    allowed_chat_ids,
-    allowed_commands,
-)
-
-routes = web.RouteTableDef()
+from diffusion_at_home.config import cache_dir, allowed_commands, allowed_chat_ids
+from diffusion_at_home.instance.job import Job, JobStatus
+from diffusion_at_home.instance.worker import Worker, WorkerStatus
+from diffusion_at_home.utils import get_tg_endpoint
 
 
 class ServerException(Exception):
@@ -145,19 +137,3 @@ class BotServer(web.Application):
 
     async def telegram_sendMessage(self, msg: dict):
         await self.telegram_session.post(get_tg_endpoint('sendMessage'), json=msg)
-
-    # async def update_job_message(self, job_id):
-    #     job = self.get_job_by_id(job_id)
-    #     if not job:
-    #         return
-    #
-    #     if not job.update_message_id:
-    #         logging.error(
-    #             f'cannot update message for job {job_id}, update message is not sent yet'
-    #         )
-    #         return
-    #
-    #     await self.telegram_session.post(get_tg_endpoint('editMessageReplyMarkup'), data={
-    #         'chat_id':
-    #     })
-    #

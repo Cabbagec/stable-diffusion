@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path, PurePath
 from typing import Union
 
-from diffusion_at_home import Worker, exec_callback
+from diffusion_at_home.utils import exec_callback
 
 
 def dump_json_to_file(dict_json: dict, file):
