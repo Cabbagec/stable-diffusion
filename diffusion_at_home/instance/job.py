@@ -67,6 +67,8 @@ class Job:
         job_resource_update_callback: callable,
         job_progress_callback: callable,
         job_finish_callback: callable,
+        job_failed_callback: callable,
+        misc_message_callback: callable,
         chat_id: Union[str, int] = None,
         chat_cmd_msg_id: str = None,
         job_id: str = None,
@@ -111,6 +113,8 @@ class Job:
         # progress callbacks
         self.job_progress_callback = job_progress_callback
         self.job_finish_callback = job_finish_callback
+        self.job_failed_callback = job_failed_callback
+        self.misc_message_callback = misc_message_callback
 
         # update message and others
         self.update_message_id = ''
@@ -274,6 +278,8 @@ class Job:
         elif value == JobStatus.FAILED:
             self._job_status = value
             # TODO: do cleanups
+            exec_callback(self.job_failed_callback, self)
+            exec_callback(self.misc_message_callback, self, 'Job failed')
 
         else:
             raise Exception(f'Job {self.job_id}: trying to set unknown status: {value}')
