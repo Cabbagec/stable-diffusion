@@ -9,10 +9,15 @@ def get_tg_endpoint(name):
     return f'{telegram_bot_api_server}{name}'
 
 
+backgroud_tasks = set()
+
+
 def exec_callback(callback, *args, **kwargs):
     if callback:
         if asyncio.iscoroutinefunction(callback):
-            asyncio.create_task(callback(*args, **kwargs))
+            task = asyncio.create_task(callback(*args, **kwargs))
+            backgroud_tasks.add(task)
+            task.add_done_callback(backgroud_tasks.discard)
         elif callable(callback):
             callback(*args, **kwargs)
 
