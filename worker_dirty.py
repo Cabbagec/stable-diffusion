@@ -238,7 +238,7 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     if width % 64 != 0 or height % 64 != 0:
         raise Exception(f'Width and height must be factors of 64.')
 
-    if (width * height) > (512 * 512 * 1.25):
+    if (width * height) > (512 * 512 * 2.25):
         raise Exception(f'Image too large, try use smaller width and height')
 
     params = {
@@ -296,7 +296,7 @@ async def main():
         # asyncio.create_task(get_task_and_run(model, job_dict))
         try:
             await asyncio.wait_for(
-                get_task_and_run(client, model, job_dict, status_dict), timeout=200
+                get_task_and_run(client, model, job_dict, status_dict), timeout=60*5
             )
         except asyncio.TimeoutError:
             logging.error(f'current job timed out')
