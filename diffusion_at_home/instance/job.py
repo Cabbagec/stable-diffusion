@@ -100,14 +100,9 @@ class Job:
         self.chat_id = chat_id
         self.chat_cmd_msg_id = chat_cmd_msg_id
 
-        # self.animation_sent = False
-        # self.upscaled_sent = False
+        # web based attributes
+        self.client_id = client_id
 
-        # if tmp_dir:
-        #     tmp_dir = Path(tmp_dir)
-        #     if not tmp_dir.exists():
-        #         tmp_dir.mkdir(parents=True)
-        # self.job_tmpdir = Path(tmp_dir) if tmp_dir else None
         self.job_tmpdir = None
 
         self.job_progress = {}
