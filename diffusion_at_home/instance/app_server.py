@@ -48,9 +48,14 @@ class BotServer(web.Application):
             if available_workers:
                 logging.info(f'Waiting, Num of available workers: {available_workers}')
                 self.jobs_queue.append(job)
+                q_len = len(
+                    list(
+                        e for e in self.jobs_queue if e.job_status == JobStatus.WAITING
+                    )
+                )
                 raise ServerJobWaitingException(
-                    f'🤩 Job added, waiting. Current available workers: {available_workers}',
-                    available_workers,
+                    f'🤩 Job added, waiting. Current available workers: {available_workers}, queue length: {q_len}',
+                    q_len,
                 )
 
             else:
