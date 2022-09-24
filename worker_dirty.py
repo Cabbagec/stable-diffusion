@@ -1,3 +1,5 @@
+import torch.cuda
+
 import asyncio
 import json
 import logging
@@ -96,6 +98,16 @@ async def send_progress(
                     )
                 )
                 break
+
+            if status_dict.get('exception'):
+                e = status_dict.pop('exception')
+                asyncio.create_task(
+                    client.post(
+                        get_endpoint('error'),
+                        json={'job_id': job_id, 'error': e.args[0]},
+                    )
+                )
+                raise e
 
             # get total steps of job
             total_steps = updator.total_steps
@@ -226,7 +238,7 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     if width % 64 != 0 or height % 64 != 0:
         raise Exception(f'Width and height must be factors of 64.')
 
-    if (width * height) > (512 * 512 * 1.25):
+    if (width * height) > (512 * 512 * 2.25):
         raise Exception(f'Image too large, try use smaller width and height')
 
     params = {
@@ -247,6 +259,15 @@ async def get_task_and_run(client, model, job_dict: dict, status_dict: dict):
     f = asyncio.get_event_loop().run_in_executor(
         None, partial(run_task, opt, model, updator)
     )
+
+    def _callback(future):
+        e = future.exception()
+        status_dict['exception'] = e
+        torch.cuda.empty_cache()
+        if e:
+            logging.exception(e)
+    f.add_done_callback(_callback)
+
     status_dict.update({'status': 'RUNNING', 'job_id': job_id})
     await send_progress(
         client=client,
@@ -275,7 +296,7 @@ async def main():
         # asyncio.create_task(get_task_and_run(model, job_dict))
         try:
             await asyncio.wait_for(
-                get_task_and_run(client, model, job_dict, status_dict), timeout=200
+                get_task_and_run(client, model, job_dict, status_dict), timeout=60*5
             )
         except asyncio.TimeoutError:
             logging.error(f'current job timed out')
