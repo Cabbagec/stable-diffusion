@@ -64,13 +64,18 @@ class Job:
         self,
         job_source,
         job_details: dict,
-        job_resource_update_callback: callable,
-        job_progress_callback: callable,
-        job_finish_callback: callable,
-        job_failed_callback: callable,
-        misc_message_callback: callable,
+        # interactive callbacks
+        job_resource_update_callback: callable = None,
+        job_progress_callback: callable = None,
+        job_finish_callback: callable = None,
+        job_failed_callback: callable = None,
+        misc_message_callback: callable = None,
+        # telegram based attributes
         chat_id: Union[str, int] = None,
         chat_cmd_msg_id: str = None,
+        # web based attributes
+        client_id=None,
+        # others
         job_id: str = None,
         # assignee: Worker = None,
         # tmp_dir: PurePath = None,
