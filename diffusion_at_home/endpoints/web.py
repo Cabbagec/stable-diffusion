@@ -59,7 +59,7 @@ async def create_job(req: web.Request):
         if width % 64 != 0 or height % 64 != 0:
             return error_response(f'width and height must be multiples of 64')
 
-        if width * height > 512 * 512 * 2.25:
+        if width * height > size_limit:
             return error_response(
                 'picture too large, please use smaller width or height'
             )

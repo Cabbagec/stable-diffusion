@@ -17,3 +17,5 @@ allowed_commands = [
 name = 'HomeDiffusionBot'
 cache_dir = '/tmp/diffusionbot'
 telegram_bot_api_server = f'https://api.telegram.org/bot{tg_bot_token}/'
+
+size_limit = 512 * 512 * 2.25
