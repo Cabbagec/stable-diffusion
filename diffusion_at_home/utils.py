@@ -55,8 +55,15 @@ def get_param(data: dict, params, default=None):
     return get_param(next_data, params[1:], default)
 
 
-def filter_prompt(text: str):
-    if re.match(r'^[0-9a-zA-Z,\.\s!]+$', text):
+def filter_prompt(text: str, raise_exception=True):
+    if not text:
+        if raise_exception:
+            raise Exception(f'Text is empty')
+        return
+
+    if re.match(r'^[0-9a-zA-Z,\.\s\-&!]+$', text):
         return text
-    else:
+    elif raise_exception:
         raise Exception('English only please')
+    else:
+        return
