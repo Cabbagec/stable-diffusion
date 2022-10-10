@@ -9,7 +9,8 @@ from aiohttp import web, BodyPartReader
 from diffusion_at_home.config import cache_dir, allowed_commands, allowed_chat_ids
 from diffusion_at_home.instance.job import Job, JobStatus
 from diffusion_at_home.instance.worker import Worker, WorkerStatus
-from diffusion_at_home.utils import get_tg_endpoint
+from diffusion_at_home.utils import get_tg_endpoint, exec_callback
+from diffusion_at_home.hooks import on_worker_not_available
 
 
 class ServerException(Exception):
@@ -61,6 +62,7 @@ class BotServer(web.Application):
             else:
                 logging.info(f'No workers available for job {job.job_id}, abandon')
                 job.job_status = JobStatus.FAILED
+                exec_callback(on_worker_not_available)
                 raise ServerException(
                     f'Sorry 😢, no workers are available currently. '
                     f'Please try again after workers are available.'
